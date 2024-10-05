@@ -1,1 +1,1 @@
-exclude=LICENSE
+exclude=LICENSE,test.sh
