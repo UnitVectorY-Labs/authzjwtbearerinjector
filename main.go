@@ -8,15 +8,20 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/status"
@@ -39,6 +44,11 @@ var (
 	configFile           ConfigFile
 	configFilePrivateKey *rsa.PrivateKey
 
+	// Caching
+
+	tokenCache        = sync.Map{}
+	tokenSoftLifetime float32
+
 	// Utility variables
 
 	pemKeyReplacer = strings.NewReplacer(
@@ -54,6 +64,15 @@ const (
 )
 
 func init() {
+	// Get the tokenSoftLifetime from the environment variable
+	// If set, parse SOFT_TOKEN_LIFETIME as a float32 if not set defualt to 0.5, if out of bounds set to 0.5
+	tokenSoftLifetimeString := os.Getenv("SOFT_TOKEN_LIFETIME")
+	tokenSoftLifetimeParsed, err := strconv.ParseFloat(tokenSoftLifetimeString, 32)
+	if err != nil || tokenSoftLifetimeParsed < 0.0 || tokenSoftLifetimeParsed > 1.0 {
+		tokenSoftLifetimeParsed = 0.5
+	}
+	tokenSoftLifetime = float32(tokenSoftLifetimeParsed)
+
 	// Check if debug logging is enabled via an environment variable
 	if os.Getenv("DEBUG") == "true" {
 		debugLogger = log.New(os.Stdout, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
@@ -64,6 +83,14 @@ func init() {
 		debugLogger.SetOutput(os.Stderr)
 		debugLogEnabled = false
 	}
+}
+
+type CachedToken struct {
+	Token      string
+	Expiry     time.Time
+	SoftExpiry time.Time
+	Issued     time.Time
+	Mutex      sync.Mutex
 }
 
 // The YAML file configuration
@@ -290,7 +317,7 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 
 	// THe iat and exp claims are always added to the payload
 	payload["iat"] = time.Now().Unix()
-	payload["exp"] = time.Now().Add(time.Hour).Unix()
+	payload["exp"] = time.Now().Add(time.Hour).Unix() // Defaulting to industry standard of 1 hour
 
 	if debugLogEnabled {
 		// Log the payload claim
@@ -319,7 +346,9 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 	return jwtToken, nil
 }
 
-func exchangeJWTBearerForToken(jwtToken string) (string, error) {
+func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, error) {
+
+	now := time.Now()
 
 	if debugLogEnabled {
 		log.Print("Exchanging JWT for token")
@@ -330,7 +359,7 @@ func exchangeJWTBearerForToken(jwtToken string) (string, error) {
 	if tokenURL == "" {
 		tokenURL = configFile.Oauth2.TokenURL
 		if tokenURL == "" {
-			return "", errors.New("no OAuth2 token URL set")
+			return "", now, now, errors.New("no OAuth2 token URL set")
 		}
 	}
 
@@ -339,7 +368,7 @@ func exchangeJWTBearerForToken(jwtToken string) (string, error) {
 	if responseField == "" {
 		responseField = configFile.Oauth2.ResponseField
 		if responseField == "" {
-			return "", errors.New("no OAuth2 response field set")
+			return "", now, now, errors.New("no OAuth2 response field set")
 		}
 	}
 
@@ -350,56 +379,100 @@ func exchangeJWTBearerForToken(jwtToken string) (string, error) {
 
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", err
+		return "", now, now, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", now, now, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", errors.New("OAuth2 token endpoint returned status " + resp.Status + ": " + string(bodyBytes))
+		return "", now, now, errors.New("OAuth2 token endpoint returned status " + resp.Status + ": " + string(bodyBytes))
 	}
 
 	var respData map[string]interface{}
 	decoder := json.NewDecoder(resp.Body)
 	err = decoder.Decode(&respData)
 	if err != nil {
-		return "", err
+		return "", now, now, err
 	}
 
 	token, ok := respData[responseField].(string)
 	if !ok {
-		return "", errors.New("OAuth2 token endpoint response does not contain field " + responseField)
+		return "", now, now, errors.New("OAuth2 token endpoint response does not contain field " + responseField)
 	}
 
-	return token, nil
+	// Extract the expiration time
+	expirationTime, issuedAtTime := extractExpirationClaims(token)
+
+	return token, expirationTime, issuedAtTime, nil
+}
+
+func extractExpirationClaims(token string) (time.Time, time.Time) {
+	// Define default values for exp (now + 1 hour) and iat (now)
+	now := time.Now()
+	defaultExp := now.Add(1 * time.Hour)
+	defaultIat := now
+
+	// Split the token into parts (header, payload, signature)
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		// If it's not a valid JWT format, return default values
+		return defaultExp, defaultIat
+	}
+
+	// Base64 decode the payload (second part of the JWT)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		// If decoding fails, return default values
+		return defaultExp, defaultIat
+	}
+
+	// Parse the payload into a map
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		// If parsing the payload fails, return default values
+		return defaultExp, defaultIat
+	}
+
+	// Extract the exp claim
+	expFloat, ok := claims["exp"].(float64)
+	expirationTime := defaultExp
+	if ok {
+		expirationTime = time.Unix(int64(expFloat), 0)
+	}
+
+	// Extract the iat claim
+	iatFloat, ok := claims["iat"].(float64)
+	issuedAtTime := defaultIat
+	if ok {
+		issuedAtTime = time.Unix(int64(iatFloat), 0)
+	}
+
+	// Return the extracted or default values
+	return expirationTime, issuedAtTime
 }
 
 func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResponse, error) {
 
 	metadataClaims := extractMetadataClaims(req)
 
-	// Generate and log the JWT, this is just for debugging purposes as this
-	// implementation is not complete and is a work in progress
-	localJwtToken, err := generateJWT(metadataClaims)
-	if err != nil {
-		log.Printf("Error generating JWT: %v", err)
+	// Get the cached token
+	start := time.Now()
+	jwtToken, err := getCachedToken(metadataClaims)
+	elapsed := time.Since(start)
 
-		// Return a CheckResponse with an error
-		response := createErrorResponse()
-		return response, nil
+	if debugLogEnabled {
+		log.Printf("getCachedToken took %s", elapsed)
 	}
 
-	// Exchange the JWT for a token
-	jwtToken, err := exchangeJWTBearerForToken(localJwtToken)
 	if err != nil {
-		log.Printf("Error exchanging JWT for token: %v", err)
+		log.Printf("Error getting cached token: %v", err)
 
 		// Return a CheckResponse with an error
 		response := createErrorResponse()
@@ -459,9 +532,134 @@ func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
 				claims[key] = value.GetStringValue()
 			}
 		}
-	} else {
-		// log.Printf("%s not found in filter metadata", metadataLocalTokenNamespace)
+	} else if debugLogEnabled {
+		log.Printf("%s not found in filter metadata", metadataLocalTokenNamespace)
 	}
 
 	return claims
+}
+
+func getCachedToken(claims map[string]string) (string, error) {
+	// Step 1: Hash the claims to create a unique cache key
+	cacheKey := hashClaims(claims)
+
+	if debugLogEnabled {
+		log.Printf("getCachedToken: %s", cacheKey)
+	}
+
+	// Step 2: Try to load the cached token entry
+	cachedEntry, exists := tokenCache.Load(cacheKey)
+
+	var cachedToken *CachedToken
+	if exists {
+		// Type assert the cached entry as *CachedToken
+		cachedToken = cachedEntry.(*CachedToken)
+
+		// Lock the cached token to ensure thread-safe access
+		cachedToken.Mutex.Lock()
+		defer cachedToken.Mutex.Unlock()
+
+		// Step 3: Check if the token is still within soft expiry
+		if time.Now().Before(cachedToken.SoftExpiry) {
+			if debugLogEnabled {
+				log.Printf("Returning cached token for: %s", cacheKey)
+			}
+
+			return cachedToken.Token, nil
+		}
+	} else {
+		// If no cached entry exists, create a new one with a locked mutex to block other requests
+		newCachedToken := &CachedToken{
+			Mutex: sync.Mutex{},
+		}
+		tokenCache.Store(cacheKey, newCachedToken)
+		cachedToken = newCachedToken
+
+		if debugLogEnabled {
+			log.Printf("Cache miss with token for: %s", cacheKey)
+		}
+	}
+
+	// Step 4: Lock the token generation if it hasn't been done yet
+	cachedToken.Mutex.Lock()
+	defer cachedToken.Mutex.Unlock()
+
+	// Step 5: After locking, check again if the token is still valid
+	if time.Now().Before(cachedToken.SoftExpiry) {
+		return cachedToken.Token, nil
+	}
+
+	// Step 6: If we reach here, we need to generate a new JWT
+	localJWT, err := generateJWT(claims)
+	if err != nil {
+		// Return the cached token if it's still valid
+		if time.Now().Before(cachedToken.SoftExpiry) {
+			if debugLogEnabled {
+				log.Printf("Soft expired token generate failed, using existing token : %s", cacheKey)
+			}
+
+			return cachedToken.Token, nil
+		}
+
+		if debugLogEnabled {
+			log.Printf("Expired token generated failed: %s", cacheKey)
+		}
+
+		return "", err
+	}
+
+	// Step 7: Exchange the local JWT for an actual token
+	token, expiry, issuedAt, err := exchangeJWTBearerForToken(localJWT)
+	if err != nil {
+		// If token exchange fails, return the cached token if it's still valid
+		if time.Now().Before(cachedToken.SoftExpiry) {
+
+			if debugLogEnabled {
+				log.Printf("Soft expired token exchange failed, using existing token : %s", cacheKey)
+			}
+
+			return cachedToken.Token, nil
+		}
+
+		if debugLogEnabled {
+			log.Printf("Expired token exchange failed: %s", cacheKey)
+		}
+
+		// If the cached token is also expired, return an error
+		return "", err
+	}
+
+	// Calculate soft expiry based on the configurable lifetime ratio
+	lifetime := expiry.Sub(issuedAt)
+	softExpiry := time.Now().Add(time.Duration(float32(lifetime) * tokenSoftLifetime))
+
+	// Update the cached entry with the new token and expiry times
+	cachedToken.Token = token
+	cachedToken.Expiry = expiry
+	cachedToken.SoftExpiry = softExpiry
+	cachedToken.Issued = issuedAt
+
+	if debugLogEnabled {
+		log.Printf("New token request successful: %s", cacheKey)
+	}
+
+	return token, nil
+}
+
+func hashClaims(claims map[string]string) string {
+	h := sha256.New()
+	// Extract the keys from the map and sort them
+	keys := make([]string, 0, len(claims))
+	for k := range claims {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Write the sorted key-value pairs to the hash
+	for _, k := range keys {
+		h.Write([]byte(fmt.Sprintf("%s:%v", k, claims[k])))
+	}
+
+	// Return the final hash as a hexadecimal string
+	return hex.EncodeToString(h.Sum(nil))
 }
