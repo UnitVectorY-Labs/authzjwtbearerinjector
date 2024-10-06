@@ -68,8 +68,11 @@ const (
 	EnvSoftTokenLifetime   = "SOFT_TOKEN_LIFETIME"
 	EnvDebug               = "DEBUG"
 	EnvPrivateKey          = "PRIVATE_KEY"
+	EnvPrivateKeyId        = "PRIVATE_KEY_ID"
 	EnvOauth2TokenURL      = "OAUTH2_TOKEN_URL"
 	EnvOauth2ResponseField = "OAUTH2_RESPONSE_FIELD"
+	EnvOauth2ClientId      = "OAUTH2_CLIENT_ID"
+	EnvOauth2Audience      = "OAUTH2_AUDIENCE"
 
 	// Common header and grant type
 	POST                    = "POST"
@@ -132,21 +135,27 @@ type CachedTokenValue struct {
 
 // The YAML file configuration
 type ConfigFile struct {
-	PrivateKey string            `yaml:"private_key"`
-	LocalToken map[string]string `yaml:"local_token"`
-	Oauth2     struct {
+	PrivateKey   string            `yaml:"private_key"`
+	PrivateKeyId string            `yaml:"private_key_id"`
+	LocalToken   map[string]string `yaml:"local_token"`
+	Oauth2       struct {
 		TokenURL      string `yaml:"token_url"`
 		ResponseField string `yaml:"response_field"`
+		ClientId      string `yaml:"client_id"`
+		Audience      string `yaml:"audience"`
 	} `yaml:"oauth2"`
 }
 
 // The Environment variable configuration
 type ConfigEnvironment struct {
-	PrivateKey string
-	LocalToken map[string]string
-	Oauth2     struct {
+	PrivateKey   string
+	PrivateKeyId string
+	LocalToken   map[string]string
+	Oauth2       struct {
 		TokenURL      string
 		ResponseField string
+		ClientId      string
+		Audience      string
 	}
 }
 
@@ -209,14 +218,19 @@ func main() {
 
 	// Load in the environment variables into ConfigEnvironment
 	configEnvironment = ConfigEnvironment{
-		PrivateKey: os.Getenv(EnvPrivateKey),
-		LocalToken: map[string]string{},
+		PrivateKey:   os.Getenv(EnvPrivateKey),
+		PrivateKeyId: os.Getenv(EnvPrivateKeyId),
+		LocalToken:   map[string]string{},
 		Oauth2: struct {
 			TokenURL      string
 			ResponseField string
+			ClientId      string
+			Audience      string
 		}{
 			TokenURL:      os.Getenv(EnvOauth2TokenURL),
 			ResponseField: os.Getenv(EnvOauth2ResponseField),
+			ClientId:      os.Getenv(EnvOauth2ClientId),
+			Audience:      os.Getenv(EnvOauth2Audience),
 		},
 	}
 
@@ -329,6 +343,16 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 		"typ": JWT,
 	}
 
+	// Pull the KID from the config file first if it is populated
+	if configFile.PrivateKeyId != "" {
+		header["kid"] = configFile.PrivateKeyId
+	}
+
+	// Pull the KID from the environment variables if it is populated
+	if configEnvironment.PrivateKeyId != "" {
+		header["kid"] = configEnvironment.PrivateKeyId
+	}
+
 	headerBytes, _ := json.Marshal(header)
 	encodedHeader := base64.RawURLEncoding.EncodeToString(headerBytes)
 
@@ -410,6 +434,25 @@ func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, e
 	data := url.Values{}
 	data.Set(GrantType, OauthJwtBearerGrantType)
 	data.Set(Assertion, jwtToken)
+
+	// Add the clientId ifit is set in the config
+	if configFile.Oauth2.ClientId != "" {
+		data.Set("client_id", configFile.Oauth2.ClientId)
+	}
+	// Add the clientId if it is set in the environment variables
+	if configEnvironment.Oauth2.ClientId != "" {
+		data.Set("client_id", configEnvironment.Oauth2.ClientId)
+	}
+
+	// Add the audience if it is set in the config
+	if configFile.Oauth2.Audience != "" {
+		data.Set("audience", configFile.Oauth2.Audience)
+	}
+
+	// Add the audience if it is set in the environment variables
+	if configEnvironment.Oauth2.Audience != "" {
+		data.Set("audience", configEnvironment.Oauth2.Audience)
+	}
 
 	req, err := http.NewRequest(POST, tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
