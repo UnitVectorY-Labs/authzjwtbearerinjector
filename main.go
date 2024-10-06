@@ -19,15 +19,52 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type/v3"
-	"google.golang.org/genproto/googleapis/rpc/status"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
+	"gopkg.in/yaml.v3"
 )
+
+var (
+	debugLogger     *log.Logger
+	debugLogEnabled bool
+
+	configEnvironment           ConfigEnvironment
+	configEnvironmentPrivateKey *rsa.PrivateKey
+
+	configFile           ConfigFile
+	configFilePrivateKey *rsa.PrivateKey
+
+	// Utility variables
+
+	pemKeyReplacer = strings.NewReplacer(
+		"-----BEGIN PRIVATE KEY-----", "",
+		"-----END PRIVATE KEY-----", "",
+		"\\n", "",
+		"\n", "",
+	)
+)
+
+const (
+	metadataLocalTokenNamespace = "com.unitvectory.authzjwtbearerinjector.localtoken"
+)
+
+func init() {
+	// Check if debug logging is enabled via an environment variable
+	if os.Getenv("DEBUG") == "true" {
+		debugLogger = log.New(os.Stdout, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
+		debugLogEnabled = true
+	} else {
+		// Create a no-op logger to discard debug messages
+		debugLogger = log.New(os.Stderr, "", 0)
+		debugLogger.SetOutput(os.Stderr)
+		debugLogEnabled = false
+	}
+}
 
 // The YAML file configuration
 type ConfigFile struct {
@@ -41,6 +78,7 @@ type ConfigFile struct {
 
 // The Environment variable configuration
 type ConfigEnvironment struct {
+	PrivateKey string
 	LocalToken map[string]string
 	Oauth2     struct {
 		TokenURL      string
@@ -48,31 +86,125 @@ type ConfigEnvironment struct {
 	}
 }
 
-// Global config instance
-var configEnvironment ConfigEnvironment
-var configEnvironmentPrivateKey *rsa.PrivateKey
-var configFile ConfigFile
-var configFilePrivateKey *rsa.PrivateKey
-
 type authServer struct {
 	pb.UnimplementedAuthorizationServer
 }
 
+func main() {
+	// Determine the config file path
+	configFilePath := os.Getenv("CONFIG_FILE_PATH")
+	if configFilePath == "" {
+		configFilePath = "/app/config.yaml"
+	}
+
+	// Load in YAML file from fonfig file and load into ConfigFile
+	if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
+		log.Printf("config file does not exist: %v", err)
+		log.Print("no config file found, using environment variables only")
+		configFile = ConfigFile{}
+	} else {
+		configFileContent, err := os.ReadFile(configFilePath)
+		if err != nil {
+			log.Fatalf("failed to read config file: %v", err)
+		}
+
+		err = yaml.Unmarshal(configFileContent, &configFile)
+		if err != nil {
+			log.Fatalf("failed to unmarshal config file: %v", err)
+		}
+
+		if debugLogEnabled {
+			// Log the config file local token (int a loop) and oauth variables
+			for k, v := range configFile.LocalToken {
+				log.Printf("Config File Local Token: %s = %s", k, v)
+			}
+			log.Printf("Config File OAuth2 Token URL: %s", configFile.Oauth2.TokenURL)
+			log.Printf("Config File OAuth2 Response Field: %s", configFile.Oauth2.ResponseField)
+		}
+
+		// Parse the private key from the config file
+		if configFile.PrivateKey != "" {
+			loadedConfigFilePrivateKey, err := parsePrivateKey(configFile.PrivateKey)
+			if err != nil {
+				log.Fatalf("Error parsing private key: %v", err)
+			}
+			log.Print("Successfully parsed private key from config file")
+			configFilePrivateKey = loadedConfigFilePrivateKey
+		} else {
+			log.Print("No private key found in config file")
+			configFilePrivateKey = nil
+		}
+	}
+
+	// Load in the environment variables into ConfigEnvironment
+	configEnvironment = ConfigEnvironment{
+		PrivateKey: os.Getenv("PRIVATE_KEY"),
+		LocalToken: map[string]string{},
+		Oauth2: struct {
+			TokenURL      string
+			ResponseField string
+		}{
+			TokenURL:      os.Getenv("OAUTH2_TOKEN_URL"),
+			ResponseField: os.Getenv("OAUTH2_RESPONSE_FIELD"),
+		},
+	}
+
+	// Loop through all of the environment variables grabbing the LOCAL_TOKEN_ variables
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		key := pair[0]
+		value := pair[1]
+
+		// If the variable starts with LOCAL_TOKEN_, add it to the local token map removing the prefix
+		if strings.HasPrefix(key, "LOCAL_TOKEN_") {
+			configEnvironment.LocalToken[strings.TrimPrefix(key, "LOCAL_TOKEN_")] = value
+		}
+	}
+
+	if debugLogEnabled {
+		// Log the environment variables local token (int a loop) and oauth variables
+		for k, v := range configEnvironment.LocalToken {
+			log.Printf("Environment Local Token: %s = %s", k, v)
+		}
+		log.Printf("Environment OAuth2 Token URL: %s", configEnvironment.Oauth2.TokenURL)
+		log.Printf("Environment OAuth2 Response Field: %s", configEnvironment.Oauth2.ResponseField)
+	}
+
+	// Parse the private key from the environment variables
+	if configEnvironment.PrivateKey != "" {
+		loadedConfigEnvironmentPrivateKey, err := parsePrivateKey(configEnvironment.PrivateKey)
+		if err != nil {
+			log.Fatalf("Error parsing private key: %v", err)
+		}
+		log.Print("Successfully parsed private key from environment variables")
+		configEnvironmentPrivateKey = loadedConfigEnvironmentPrivateKey
+	} else {
+		log.Print("No private key found in environment variables")
+		configEnvironmentPrivateKey = nil
+	}
+
+	// Start the gRPC server
+	lis, err := net.Listen("tcp", "0.0.0.0:50051")
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterAuthorizationServer(grpcServer, &authServer{})
+
+	// Enable gRPC reflection
+	reflection.Register(grpcServer)
+
+	log.Printf("authzjwtbearerinjector service listening on :50051...")
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
+	}
+}
+
 func parsePrivateKey(privateKeyString string) (*rsa.PrivateKey, error) {
-	// Log the raw private key string
-	log.Println("Raw private key string:")
-	log.Println(privateKeyString)
-
-	// Remove the PEM header, footer, and any newlines
-	privateKeyCleaned := strings.ReplaceAll(privateKeyString, "-----BEGIN PRIVATE KEY-----", "")
-	privateKeyCleaned = strings.ReplaceAll(privateKeyCleaned, "-----END PRIVATE KEY-----", "")
-	privateKeyCleaned = strings.ReplaceAll(privateKeyCleaned, "\\n", "")
-	privateKeyCleaned = strings.ReplaceAll(privateKeyCleaned, "\n", "")
+	// Remove the PEM header, footer, and any newlines so we can decode the key
+	privateKeyCleaned := pemKeyReplacer.Replace(privateKeyString)
 	privateKeyCleaned = strings.TrimSpace(privateKeyCleaned)
-
-	// Log the cleaned private key for debugging
-	log.Println("Cleaned private key:")
-	log.Println(privateKeyCleaned)
 
 	// Decode the Base64-encoded private key
 	decodedKey, err := base64.StdEncoding.DecodeString(privateKeyCleaned)
@@ -80,7 +212,6 @@ func parsePrivateKey(privateKeyString string) (*rsa.PrivateKey, error) {
 		log.Printf("failed to base64 decode private key: %v", err)
 		return nil, err
 	}
-	log.Println("Successfully Base64 decoded the private key")
 
 	// Parse the PKCS#8 private key
 	parsedKey, err := x509.ParsePKCS8PrivateKey(decodedKey)
@@ -100,8 +231,8 @@ func parsePrivateKey(privateKeyString string) (*rsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
+// Gets the preferred private key to use for local token generation
 func getPrivateKey() (*rsa.PrivateKey, error) {
-	// Get the private key: First use configEnvironmentPrivateKey if it is set, if not use configFilePrivateKey, otherwise return an error
 	privateKey := configEnvironmentPrivateKey
 	if privateKey == nil {
 		privateKey = configFilePrivateKey
@@ -114,6 +245,10 @@ func getPrivateKey() (*rsa.PrivateKey, error) {
 
 func generateJWT(metadataClaims map[string]string) (string, error) {
 
+	if debugLogEnabled {
+		log.Printf("Generating JWT with metadata claims: %v", metadataClaims)
+	}
+
 	// Get the private key
 	privateKey, err := getPrivateKey()
 	if err != nil {
@@ -121,16 +256,17 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 	}
 
 	header := map[string]string{
-		"alg": "RS256",
+		"alg": "RS256", // Only supporting RS256 for now
 		"typ": "JWT",
 	}
+
 	headerBytes, _ := json.Marshal(header)
 	encodedHeader := base64.RawURLEncoding.EncodeToString(headerBytes)
 
 	// Payload
 	payload := map[string]interface{}{}
 
-	// Use the config file claims first
+	// Use the config file claims first, lower priority
 	for k, v := range configFile.LocalToken {
 		payload[k] = v
 
@@ -152,8 +288,16 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 		log.Printf("Added Metadata Claim: %s = %s", k, v)
 	}
 
+	// THe iat and exp claims are always added to the payload
 	payload["iat"] = time.Now().Unix()
 	payload["exp"] = time.Now().Add(time.Hour).Unix()
+
+	if debugLogEnabled {
+		// Log the payload claim
+		for k, v := range payload {
+			log.Printf("Payload Claim: %s = %s", k, v)
+		}
+	}
 
 	payloadBytes, _ := json.Marshal(payload)
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
@@ -175,9 +319,13 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 	return jwtToken, nil
 }
 
-func exchangeJWTForToken(jwtToken string) (string, error) {
+func exchangeJWTBearerForToken(jwtToken string) (string, error) {
 
-	// Get the OAuth2 token URL first from configEnvironment.Oauth2.TokenURL, if not set use configFile.Oauth2.TokenURL
+	if debugLogEnabled {
+		log.Print("Exchanging JWT for token")
+	}
+
+	// Get the preferred token URL to use for token exchange
 	tokenURL := configEnvironment.Oauth2.TokenURL
 	if tokenURL == "" {
 		tokenURL = configFile.Oauth2.TokenURL
@@ -186,7 +334,7 @@ func exchangeJWTForToken(jwtToken string) (string, error) {
 		}
 	}
 
-	// Get the OAuth2 response field first from configEnvironment.Oauth2.ResponseField, if not set use configFile.Oauth2.ResponseField
+	// Get the preferred response field to use for token exchange
 	responseField := configEnvironment.Oauth2.ResponseField
 	if responseField == "" {
 		responseField = configFile.Oauth2.ResponseField
@@ -195,6 +343,7 @@ func exchangeJWTForToken(jwtToken string) (string, error) {
 		}
 	}
 
+	// Build the jwt-bearer token request
 	data := url.Values{}
 	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
 	data.Set("assertion", jwtToken)
@@ -232,49 +381,7 @@ func exchangeJWTForToken(jwtToken string) (string, error) {
 	return token, nil
 }
 
-func createErrorResponse() *pb.CheckResponse {
-	response := &pb.CheckResponse{
-		Status: &status.Status{
-			Code:    int32(13),
-			Message: "Internal server error",
-		},
-		HttpResponse: &pb.CheckResponse_DeniedResponse{
-			DeniedResponse: &pb.DeniedHttpResponse{
-				Status: &envoy_type.HttpStatus{
-					Code: envoy_type.StatusCode(500),
-				},
-				Body: "Failed to vend JWT",
-			},
-		},
-	}
-	return response
-}
-
-func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
-	claims := make(map[string]string)
-
-	// Access and log route metadata filter values
-	filterMetadata := req.Attributes.GetRouteMetadataContext().GetFilterMetadata()
-
-	// Check for the specific metadata key and log the value
-	if metadata, ok := filterMetadata["com.unitvectory.authzjwtbearerinjector.localtoken"]; ok {
-		if fields := metadata.GetFields(); fields != nil {
-			// Loop through all of the fields and add to claims map
-			for key, value := range fields {
-				claims[key] = value.GetStringValue()
-			}
-		}
-	} else {
-		log.Printf("com.unitvectory.authzjwtbearerinjector. not found in filter metadata")
-	}
-
-	return claims
-}
-
 func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResponse, error) {
-
-	// Log the entire request
-	log.Printf("Request: %+v", req)
 
 	metadataClaims := extractMetadataClaims(req)
 
@@ -289,10 +396,8 @@ func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.Check
 		return response, nil
 	}
 
-	log.Printf("Generated Local JWT: %s", localJwtToken)
-
 	// Exchange the JWT for a token
-	jwtToken, err := exchangeJWTForToken(localJwtToken)
+	jwtToken, err := exchangeJWTBearerForToken(localJwtToken)
 	if err != nil {
 		log.Printf("Error exchanging JWT for token: %v", err)
 
@@ -300,8 +405,6 @@ func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.Check
 		response := createErrorResponse()
 		return response, nil
 	}
-
-	log.Printf("Exchanged JWT for token: %s", jwtToken)
 
 	response := &pb.CheckResponse{
 		Status: &status.Status{
@@ -324,77 +427,41 @@ func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.Check
 	return response, nil
 }
 
-func main() {
-
-	// Get the configFilePath from envirionment variable CONFIG_FILE_PATH or use default if not set
-	configFilePath := os.Getenv("CONFIG_FILE_PATH")
-	if configFilePath == "" {
-		configFilePath = "/app/config.yaml"
-	}
-
-	// Load in YAML file from fonfig file and load into ConfigFile
-	if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
-		log.Printf("config file does not exist: %v", err)
-		configFile = ConfigFile{}
-	} else {
-		configFileContent, err := os.ReadFile(configFilePath)
-		if err != nil {
-			log.Fatalf("failed to read config file: %v", err)
-		}
-
-		err = yaml.Unmarshal(configFileContent, &configFile)
-		if err != nil {
-			log.Fatalf("failed to unmarshal config file: %v", err)
-		}
-
-		// Parse the private key from the config file
-		loadedConfigFilePrivateKey, err := parsePrivateKey(configFile.PrivateKey)
-		if err != nil {
-			log.Fatalf("Error parsing private key: %v", err)
-		}
-		configFilePrivateKey = loadedConfigFilePrivateKey
-	}
-
-	configEnvironment = ConfigEnvironment{
-		LocalToken: map[string]string{},
-		Oauth2: struct {
-			TokenURL      string
-			ResponseField string
-		}{
-			TokenURL:      os.Getenv("OAUTH2_TOKEN_URL"),
-			ResponseField: os.Getenv("OAUTH2_RESPONSE_FIELD"),
+func createErrorResponse() *pb.CheckResponse {
+	response := &pb.CheckResponse{
+		Status: &status.Status{
+			Code:    int32(13),
+			Message: "Internal server error",
+		},
+		HttpResponse: &pb.CheckResponse_DeniedResponse{
+			DeniedResponse: &pb.DeniedHttpResponse{
+				Status: &envoy_type.HttpStatus{
+					Code: envoy_type.StatusCode(500),
+				},
+				Body: "Failed to request token",
+			},
 		},
 	}
+	return response
+}
 
-	// Loop through all of the environment variables
-	for _, e := range os.Environ() {
-		pair := strings.SplitN(e, "=", 2)
-		key := pair[0]
-		value := pair[1]
+func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
+	claims := make(map[string]string)
 
-		// If the variable starts with LOCAL_TOKEN_, add it to the local token map removing the prefix
-		if strings.HasPrefix(key, "LOCAL_TOKEN_") {
-			configEnvironment.LocalToken[strings.TrimPrefix(key, "LOCAL_TOKEN_")] = value
+	// Access and log route metadata filter values
+	filterMetadata := req.Attributes.GetRouteMetadataContext().GetFilterMetadata()
+
+	// Check for the specific metadata key and log the value
+	if metadata, ok := filterMetadata[metadataLocalTokenNamespace]; ok {
+		if fields := metadata.GetFields(); fields != nil {
+			// Loop through all of the fields and add to claims map
+			for key, value := range fields {
+				claims[key] = value.GetStringValue()
+			}
 		}
+	} else {
+		// log.Printf("%s not found in filter metadata", metadataLocalTokenNamespace)
 	}
 
-	// Print everything from configEnvironment
-	log.Printf("Config Environment: %+v", configEnvironment)
-	// Print everything from
-
-	lis, err := net.Listen("tcp", "0.0.0.0:50051")
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
-
-	grpcServer := grpc.NewServer()
-	pb.RegisterAuthorizationServer(grpcServer, &authServer{})
-
-	// Enable gRPC reflection
-	reflection.Register(grpcServer)
-
-	log.Printf("authzjwtbearerinjector service listening on :50051...")
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
-	}
+	return claims
 }
