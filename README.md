@@ -10,14 +10,14 @@ This service is implemented in Go and is intended to run as a sidecar to the Env
 
 ## Configuration
 
-There are three ways to configure the `authzjwtbearerinjector` service: using **context extensions**, **environment variables**, or a **configuration file**.
+There are three ways to configure the `authzjwtbearerinjector` service: using **context metadata**, **environment variables**, or a **configuration file**.
 
-- **Context Extensions**: These are used to pass information specific to the request or backend.
+- **Context Metadata**: These are used to pass information specific to the request or backend. Only supports local token claims for now.
 - **Environment Variables and Configuration File**: These are used to pass static information for the service.
 
 ### Precedence
 
-1. **Context Extensions**: Dynamic parameters specific to each request or backend can be passed in through Envoy's context extensions.
+1. **Context Metadata**: Dynamic parameters specific to each request or backend can be passed in through Envoy's metdata. The namespace `com.unitvectory.authzjwtbearerinjector.localtoken` is used to pass these parameters.
 2. **Environment Variables**: Static configurations are set using environment variables.
 3. **Configuration File**: A YAML configuration file can be used for easier management of static settings.
 
@@ -28,20 +28,37 @@ While none of the fields are required at startup (since they can be provided thr
 The Envoy Proxy configuration uses ExtAuthz to call this service. The context extensions are passed to the service in the request and can be used to convey additional information.
 
 ```yaml
-http_filters:
-  - name: envoy.ext_authz
-    typed_config:
-      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-      context_extensions:
-        local_token_target_audience: "http://example.com"
-      transport_api_version: V3
-      failure_mode_allow: false
-      grpc_service:
-        google_grpc:
-          target_uri: 127.0.0.1:50051
-          stat_prefix: ext_authz
-        timeout: 0.5s
+- name: envoy.ext_authz
+  typed_config:
+    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+    transport_api_version: V3
+    failure_mode_allow: false
+    allowed_headers:
+    patterns:
+        - exact: ''
+    route_metadata_context_namespaces:
+    - com.unitvectory.authzjwtbearerinjector.localtoken
+    grpc_service:
+    google_grpc:
+        target_uri: "127.0.0.1:50051"
+        stat_prefix: ext_authz
+    timeout: 1s
 ```
+
+Then on each route the variables can be set in the metadata:
+
+```yaml
+routes:
+- match:
+    prefix: "/"
+route:
+    cluster: example_cluster
+metadata:
+    filter_metadata:
+    com.unitvectory.authzjwtbearerinjector.localtoken:
+        target_audience: "http://backend.example.com"
+```
+
 
 ### Environment Variables
 
@@ -65,14 +82,16 @@ private_key: |
   -----END PRIVATE KEY-----
 
 local_token:
-  iss: "http://example.com"
-  sub: "http://example.com"
-  aud: "http://example.com"
+  iss: "http://issuer.example.com"
+  sub: "http://subject.example.com"
+  aud: "http://audience.example.com"
 
 oauth2:
-  token_url: "http://example.com/token"
+  token_url: "http://oauth.example.com/token"
   response_field: "id_token"
 ```
+
+The location of the configuration file is expected to be `/app/conig.yaml` by default, but this can be changed with the `CONFIG_FILE` environment variable.
 
 ### JWT Claims
 

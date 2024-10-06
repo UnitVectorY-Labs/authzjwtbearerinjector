@@ -112,7 +112,7 @@ func getPrivateKey() (*rsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
-func generateJWT() (string, error) {
+func generateJWT(metadataClaims map[string]string) (string, error) {
 
 	// Get the private key
 	privateKey, err := getPrivateKey()
@@ -143,6 +143,13 @@ func generateJWT() (string, error) {
 		payload[k] = v
 		// Log the claims
 		log.Printf("Added Environment Claim: %s = %s", k, v)
+	}
+
+	// The metadata claims will overwrite the environment variables
+	for k, v := range metadataClaims {
+		payload[k] = v
+		// Log the claims
+		log.Printf("Added Metadata Claim: %s = %s", k, v)
 	}
 
 	payload["iat"] = time.Now().Unix()
@@ -243,20 +250,37 @@ func createErrorResponse() *pb.CheckResponse {
 	return response
 }
 
+func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
+	claims := make(map[string]string)
+
+	// Access and log route metadata filter values
+	filterMetadata := req.Attributes.GetRouteMetadataContext().GetFilterMetadata()
+
+	// Check for the specific metadata key and log the value
+	if metadata, ok := filterMetadata["com.unitvectory.authzjwtbearerinjector.localtoken"]; ok {
+		if fields := metadata.GetFields(); fields != nil {
+			// Loop through all of the fields and add to claims map
+			for key, value := range fields {
+				claims[key] = value.GetStringValue()
+			}
+		}
+	} else {
+		log.Printf("com.unitvectory.authzjwtbearerinjector. not found in filter metadata")
+	}
+
+	return claims
+}
+
 func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResponse, error) {
 
-	// Loop through the context extensiosn 	req.Attributes.ContextExtensions logging them
-	var extensions []string
-	for k, v := range req.Attributes.ContextExtensions {
-		log.Printf("Context Extension: %s = %s", k, v)
-		extensions = append(extensions, k+"="+v)
-	}
-	concatenatedExtensions := strings.Join(extensions, ";")
-	log.Printf("Concatenated Extensions: %s", concatenatedExtensions)
+	// Log the entire request
+	log.Printf("Request: %+v", req)
+
+	metadataClaims := extractMetadataClaims(req)
 
 	// Generate and log the JWT, this is just for debugging purposes as this
 	// implementation is not complete and is a work in progress
-	localJwtToken, err := generateJWT()
+	localJwtToken, err := generateJWT(metadataClaims)
 	if err != nil {
 		log.Printf("Error generating JWT: %v", err)
 
@@ -302,8 +326,13 @@ func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.Check
 
 func main() {
 
-	// Load in YAML file from /app/config.yaml and load into ConfigFile
-	configFilePath := "/app/config.yaml"
+	// Get the configFilePath from envirionment variable CONFIG_FILE_PATH or use default if not set
+	configFilePath := os.Getenv("CONFIG_FILE_PATH")
+	if configFilePath == "" {
+		configFilePath = "/app/config.yaml"
+	}
+
+	// Load in YAML file from fonfig file and load into ConfigFile
 	if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
 		log.Printf("config file does not exist: %v", err)
 		configFile = ConfigFile{}
