@@ -35,7 +35,6 @@ import (
 )
 
 var (
-	debugLogger     *log.Logger
 	debugLogEnabled bool
 
 	configEnvironment           ConfigEnvironment
@@ -75,15 +74,7 @@ func init() {
 	tokenSoftLifetime = float32(tokenSoftLifetimeParsed)
 
 	// Check if debug logging is enabled via an environment variable
-	if os.Getenv("DEBUG") == "true" {
-		debugLogger = log.New(os.Stdout, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
-		debugLogEnabled = true
-	} else {
-		// Create a no-op logger to discard debug messages
-		debugLogger = log.New(os.Stderr, "", 0)
-		debugLogger.SetOutput(os.Stderr)
-		debugLogEnabled = false
-	}
+	debugLogEnabled = os.Getenv("DEBUG") == "true"
 }
 
 type CachedToken struct {
@@ -122,6 +113,13 @@ type authServer struct {
 	pb.UnimplementedAuthorizationServer
 }
 
+// Function for debug logging
+func debugLog(message string, v ...any) {
+	if debugLogEnabled {
+		log.Printf(message, v...)
+	}
+}
+
 func main() {
 	// Determine the config file path
 	configFilePath := os.Getenv("CONFIG_FILE_PATH")
@@ -145,13 +143,13 @@ func main() {
 			log.Fatalf("failed to unmarshal config file: %v", err)
 		}
 
+		// Log the config file local token (int a loop) and oauth variables
 		if debugLogEnabled {
-			// Log the config file local token (int a loop) and oauth variables
 			for k, v := range configFile.LocalToken {
-				log.Printf("Config File Local Token: %s = %s", k, v)
+				debugLog("Config File Local Token: %s = %s", k, v)
 			}
-			log.Printf("Config File OAuth2 Token URL: %s", configFile.Oauth2.TokenURL)
-			log.Printf("Config File OAuth2 Response Field: %s", configFile.Oauth2.ResponseField)
+			debugLog("Config File OAuth2 Token URL: %s", configFile.Oauth2.TokenURL)
+			debugLog("Config File OAuth2 Response Field: %s", configFile.Oauth2.ResponseField)
 		}
 
 		// Parse the private key from the config file
@@ -193,13 +191,13 @@ func main() {
 		}
 	}
 
+	// Log the environment variables local token (int a loop) and oauth variables
 	if debugLogEnabled {
-		// Log the environment variables local token (int a loop) and oauth variables
 		for k, v := range configEnvironment.LocalToken {
-			log.Printf("Environment Local Token: %s = %s", k, v)
+			debugLog("Environment Local Token: %s = %s", k, v)
 		}
-		log.Printf("Environment OAuth2 Token URL: %s", configEnvironment.Oauth2.TokenURL)
-		log.Printf("Environment OAuth2 Response Field: %s", configEnvironment.Oauth2.ResponseField)
+		debugLog("Environment OAuth2 Token URL: %s", configEnvironment.Oauth2.TokenURL)
+		debugLog("Environment OAuth2 Response Field: %s", configEnvironment.Oauth2.ResponseField)
 	}
 
 	// Parse the private key from the environment variables
@@ -277,9 +275,7 @@ func getPrivateKey() (*rsa.PrivateKey, error) {
 
 func generateJWT(metadataClaims map[string]string) (string, error) {
 
-	if debugLogEnabled {
-		log.Printf("Generating JWT with metadata claims: %v", metadataClaims)
-	}
+	debugLog("Generating JWT with metadata claims: %v", metadataClaims)
 
 	// Get the private key
 	privateKey, err := getPrivateKey()
@@ -320,16 +316,9 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 		log.Printf("Added Metadata Claim: %s = %s", k, v)
 	}
 
-	// THe iat and exp claims are always added to the payload
+	// The iat and exp claims are always added to the payload
 	payload["iat"] = time.Now().Unix()
 	payload["exp"] = time.Now().Add(time.Hour).Unix() // Defaulting to industry standard of 1 hour
-
-	if debugLogEnabled {
-		// Log the payload claim
-		for k, v := range payload {
-			log.Printf("Payload Claim: %s = %s", k, v)
-		}
-	}
 
 	payloadBytes, _ := json.Marshal(payload)
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
@@ -355,9 +344,7 @@ func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, e
 
 	now := time.Now()
 
-	if debugLogEnabled {
-		log.Print("Exchanging JWT for token")
-	}
+	debugLog("Exchanging JWT for token")
 
 	// Get the preferred token URL to use for token exchange
 	tokenURL := configEnvironment.Oauth2.TokenURL
@@ -472,9 +459,7 @@ func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.Check
 	jwtToken, err := getCachedToken(metadataClaims)
 	elapsed := time.Since(start)
 
-	if debugLogEnabled {
-		log.Printf("getCachedToken took %s", elapsed)
-	}
+	debugLog("getCachedToken took %s", elapsed)
 
 	if err != nil {
 		log.Printf("Error getting cached token: %v", err)
@@ -537,8 +522,8 @@ func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
 				claims[key] = value.GetStringValue()
 			}
 		}
-	} else if debugLogEnabled {
-		log.Printf("%s not found in filter metadata", metadataLocalTokenNamespace)
+	} else {
+		debugLog("%s not found in filter metadata", metadataLocalTokenNamespace)
 	}
 
 	return claims
@@ -548,9 +533,7 @@ func getCachedToken(claims map[string]string) (string, error) {
 	// Step 1: Hash the claims to create a unique cache key
 	cacheKey := hashClaims(claims)
 
-	if debugLogEnabled {
-		log.Printf("getCachedToken: %s", cacheKey)
-	}
+	debugLog("getCachedToken: %s", cacheKey)
 
 	// Step 2: Try to load the cached token entry
 	cachedEntry, exists := tokenCache.Load(cacheKey)
@@ -573,9 +556,7 @@ func getCachedToken(claims map[string]string) (string, error) {
 			tokenCache.Store(cacheKey, newCachedToken)
 			cachedToken = newCachedToken
 
-			if debugLogEnabled {
-				log.Printf("Cache miss with token for: %s", cacheKey)
-			}
+			debugLog("Cache miss with token for: %s", cacheKey)
 		}
 	}
 
@@ -586,38 +567,30 @@ func getCachedToken(claims map[string]string) (string, error) {
 		if debugLogEnabled {
 			// Token found, log how long until the token expires
 			timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
-			log.Printf("Token found in cache, expires in: %s", timeTillExpiry)
+			debugLog("Token found in cache, expires in: %s", timeTillExpiry)
 			// And the soft expiration time
 			timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
-			log.Printf("Token found in cache, soft expires in: %s", timeTillSoftExpiry)
+			debugLog("Token found in cache, soft expires in: %s", timeTillSoftExpiry)
 		}
 
 		// Step 6: Check if the token is still within soft expiry
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			if debugLogEnabled {
-				log.Printf("Returning cached token for: %s", cacheKey)
-			}
+			debugLog("Returning cached token for: %s", cacheKey)
 			return cachedToken.TokenValue.Token, nil
 		}
 	}
 
-	if debugLogEnabled {
-		log.Printf("Waiting for lock on: %s", cacheKey)
-	}
+	debugLog("Waiting for lock on: %s", cacheKey)
 
 	// Step 7: Lock the token generation if it hasn't been done yet
 	cachedToken.Mutex.Lock()
 	defer cachedToken.Mutex.Unlock()
 
-	if debugLogEnabled {
-		log.Printf("Lock acquired on: %s", cacheKey)
-	}
+	debugLog("Lock acquired on: %s", cacheKey)
 
 	// Step 8: After locking, check again if the token is still valid
 	if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-		if debugLogEnabled {
-			log.Printf("Returning cached generated after getting lock token for: %s", cacheKey)
-		}
+		debugLog("Returning cached generated after getting lock token for: %s", cacheKey)
 		return cachedToken.TokenValue.Token, nil
 	}
 
@@ -626,15 +599,11 @@ func getCachedToken(claims map[string]string) (string, error) {
 	if err != nil {
 		// If generation fails, return the cached token if it's still valid
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			if debugLogEnabled {
-				log.Printf("Soft expired token generate failed, using existing token: %s", cacheKey)
-			}
+			debugLog("Soft expired token generate failed, using existing token: %s", cacheKey)
 			return cachedToken.TokenValue.Token, nil
 		}
 
-		if debugLogEnabled {
-			log.Printf("Expired token generated failed: %s", cacheKey)
-		}
+		debugLog("Expired token generated failed: %s", cacheKey)
 		return "", err
 	}
 
@@ -643,15 +612,11 @@ func getCachedToken(claims map[string]string) (string, error) {
 	if err != nil {
 		// If token exchange fails, return the cached token if it's still valid
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			if debugLogEnabled {
-				log.Printf("Soft expired token exchange failed, using existing token: %s", cacheKey)
-			}
+			debugLog("Soft expired token exchange failed, using existing token: %s", cacheKey)
 			return cachedToken.TokenValue.Token, nil
 		}
 
-		if debugLogEnabled {
-			log.Printf("Expired token exchange failed: %s", cacheKey)
-		}
+		debugLog("Expired token exchange failed: %s", cacheKey)
 		// If the cached token is also expired, return an error
 		return "", err
 	}
@@ -673,12 +638,12 @@ func getCachedToken(claims map[string]string) (string, error) {
 	if debugLogEnabled {
 		// Log how long until the token expires
 		timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
-		log.Printf("New token generated, expires in: %s", timeTillExpiry)
+		debugLog("New token generated, expires in: %s", timeTillExpiry)
 		// And the soft expiration time
 		timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
-		log.Printf("New token generated, soft expires in: %s", timeTillSoftExpiry)
+		debugLog("New token generated, soft expires in: %s", timeTillSoftExpiry)
 
-		log.Printf("New token request successful: %s", cacheKey)
+		debugLog("New token request successful: %s", cacheKey)
 	}
 
 	return token, nil
