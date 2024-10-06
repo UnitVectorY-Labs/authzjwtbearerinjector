@@ -48,12 +48,11 @@ http_filters:
 To run `authzjwtbearerinjector`, you can provide the following environment variables:
 
 - `PRIVATE_KEY`: The private key used to sign the JWT token.
-- `LOCAL_TOKEN_ISS`: The issuer of the token.
-- `LOCAL_TOKEN_SUB`: The subject of the token.
-- `LOCAL_TOKEN_AUD`: The audience of the token.
+- `LOCAL_TOKEN_iss`: The issuer of the token.
+- `LOCAL_TOKEN_sub`: The subject of the token.
+- `LOCAL_TOKEN_aud`: The audience of the token.
 - `OAUTH2_TOKEN_URL`: The URL of the OAuth 2.0 token endpoint.
-- `OAUTH2_CLIENT_ID`: The client ID for the OAuth 2.0 token endpoint.
-- `RESPONSE_FIELD`: The field in the response from the OAuth 2.0 token endpoint that contains the token (e.g., `access_token` or `id_token`).
+- `OAUTH2_RESPONSE_FIELD`: The field in the response from the OAuth 2.0 token endpoint that contains the token (e.g., `access_token` or `id_token`).
 
 ### Configuration File
 
