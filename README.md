@@ -59,7 +59,6 @@ metadata:
         target_audience: "http://backend.example.com"
 ```
 
-
 ### Environment Variables
 
 To run `authzjwtbearerinjector`, you can provide the following environment variables:
@@ -97,3 +96,7 @@ The location of the configuration file is expected to be `/app/conig.yaml` by de
 ### JWT Claims
 
 The fields for the `local_token_` context extensions, `LOCAL_TOKEN_` environment variables, or `local_token` values in the configuration file are included as claims in the locally signed JWT token. While every implementation needs the `iss`, `sub`, and `aud` fields (which are required), additional fields can be added as needed for specific implementations.
+
+## Limitations
+
+- Signing Algorithm: Only RS256 is supported for signing the JWT token.

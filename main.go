@@ -60,21 +60,45 @@ var (
 )
 
 const (
-	metadataLocalTokenNamespace = "com.unitvectory.authzjwtbearerinjector.localtoken"
+	// Environment variable names
+	EnvConfigFilePath      = "CONFIG_FILE_PATH"
+	EnvSoftTokenLifetime   = "SOFT_TOKEN_LIFETIME"
+	EnvDebug               = "DEBUG"
+	EnvPrivateKey          = "PRIVATE_KEY"
+	EnvOauth2TokenURL      = "OAUTH2_TOKEN_URL"
+	EnvOauth2ResponseField = "OAUTH2_RESPONSE_FIELD"
+
+	// Common header and grant type
+	POST                    = "POST"
+	ContentType             = "Content-Type"
+	FormURLEncoded          = "application/x-www-form-urlencoded"
+	OauthJwtBearerGrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	GrantType               = "grant_type"
+	Assertion               = "assertion"
+
+	// Metadata and JWT constants
+	MetadataLocalTokenNamespace = "com.unitvectory.authzjwtbearerinjector.localtoken"
+	RS256                       = "RS256"
+	JWT                         = "JWT"
+
+	// Error messages (performance-related if frequently thrown)
+	ErrNoPrivateKey          = "no private key set"
+	ErrNoOauth2TokenURL      = "no OAuth2 token URL set"
+	ErrNoOauth2ResponseField = "no OAuth2 response field set"
 )
 
 func init() {
 	// Get the tokenSoftLifetime from the environment variable
 	// If set, parse SOFT_TOKEN_LIFETIME as a float32 if not set defualt to 0.5, if out of bounds set to 0.5
-	tokenSoftLifetimeString := os.Getenv("SOFT_TOKEN_LIFETIME")
+	tokenSoftLifetimeString := os.Getenv(EnvSoftTokenLifetime)
 	tokenSoftLifetimeParsed, err := strconv.ParseFloat(tokenSoftLifetimeString, 32)
 	if err != nil || tokenSoftLifetimeParsed < 0.0 || tokenSoftLifetimeParsed > 1.0 {
 		tokenSoftLifetimeParsed = 0.5
 	}
 	tokenSoftLifetime = float32(tokenSoftLifetimeParsed)
 
-	// Check if debug logging is enabled via an environment variable
-	debugLogEnabled = os.Getenv("DEBUG") == "true"
+	// Check if DEBUG logging is enabled via an environment variable
+	debugLogEnabled = os.Getenv(EnvDebug) == "true"
 }
 
 type CachedToken struct {
@@ -122,7 +146,7 @@ func debugLog(message string, v ...any) {
 
 func main() {
 	// Determine the config file path
-	configFilePath := os.Getenv("CONFIG_FILE_PATH")
+	configFilePath := os.Getenv(EnvConfigFilePath)
 	if configFilePath == "" {
 		configFilePath = "/app/config.yaml"
 	}
@@ -168,14 +192,14 @@ func main() {
 
 	// Load in the environment variables into ConfigEnvironment
 	configEnvironment = ConfigEnvironment{
-		PrivateKey: os.Getenv("PRIVATE_KEY"),
+		PrivateKey: os.Getenv(EnvPrivateKey),
 		LocalToken: map[string]string{},
 		Oauth2: struct {
 			TokenURL      string
 			ResponseField string
 		}{
-			TokenURL:      os.Getenv("OAUTH2_TOKEN_URL"),
-			ResponseField: os.Getenv("OAUTH2_RESPONSE_FIELD"),
+			TokenURL:      os.Getenv(EnvOauth2TokenURL),
+			ResponseField: os.Getenv(EnvOauth2ResponseField),
 		},
 	}
 
@@ -267,7 +291,7 @@ func getPrivateKey() (*rsa.PrivateKey, error) {
 	if privateKey == nil {
 		privateKey = configFilePrivateKey
 		if privateKey == nil {
-			return nil, errors.New("no private key set")
+			return nil, errors.New(ErrNoPrivateKey)
 		}
 	}
 	return privateKey, nil
@@ -284,8 +308,8 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 	}
 
 	header := map[string]string{
-		"alg": "RS256", // Only supporting RS256 for now
-		"typ": "JWT",
+		"alg": RS256, // Only supporting RS256 for now
+		"typ": JWT,
 	}
 
 	headerBytes, _ := json.Marshal(header)
@@ -351,7 +375,7 @@ func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, e
 	if tokenURL == "" {
 		tokenURL = configFile.Oauth2.TokenURL
 		if tokenURL == "" {
-			return "", now, now, errors.New("no OAuth2 token URL set")
+			return "", now, now, errors.New(ErrNoOauth2TokenURL)
 		}
 	}
 
@@ -360,20 +384,20 @@ func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, e
 	if responseField == "" {
 		responseField = configFile.Oauth2.ResponseField
 		if responseField == "" {
-			return "", now, now, errors.New("no OAuth2 response field set")
+			return "", now, now, errors.New(ErrNoOauth2ResponseField)
 		}
 	}
 
 	// Build the jwt-bearer token request
 	data := url.Values{}
-	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
-	data.Set("assertion", jwtToken)
+	data.Set(GrantType, OauthJwtBearerGrantType)
+	data.Set(Assertion, jwtToken)
 
-	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(POST, tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", now, now, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(ContentType, FormURLEncoded)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -515,7 +539,7 @@ func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
 	filterMetadata := req.Attributes.GetRouteMetadataContext().GetFilterMetadata()
 
 	// Check for the specific metadata key and log the value
-	if metadata, ok := filterMetadata[metadataLocalTokenNamespace]; ok {
+	if metadata, ok := filterMetadata[MetadataLocalTokenNamespace]; ok {
 		if fields := metadata.GetFields(); fields != nil {
 			// Loop through all of the fields and add to claims map
 			for key, value := range fields {
@@ -523,7 +547,7 @@ func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
 			}
 		}
 	} else {
-		debugLog("%s not found in filter metadata", metadataLocalTokenNamespace)
+		debugLog("%s not found in filter metadata", MetadataLocalTokenNamespace)
 	}
 
 	return claims
