@@ -57,6 +57,9 @@ var (
 		"\\n", "",
 		"\n", "",
 	)
+
+	// Global reusable HTTP client
+	client *http.Client
 )
 
 const (
@@ -99,6 +102,20 @@ func init() {
 
 	// Check if DEBUG logging is enabled via an environment variable
 	debugLogEnabled = os.Getenv(EnvDebug) == "true"
+
+	// Create a reusable HTTP client with a custom Transport to set the User-Agent header
+	genericTimeout := 5 * time.Second
+	client = &http.Client{
+		Timeout: genericTimeout,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   genericTimeout,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout: genericTimeout,
+		},
+	}
 }
 
 type CachedToken struct {
@@ -151,7 +168,7 @@ func main() {
 		configFilePath = "/app/config.yaml"
 	}
 
-	// Load in YAML file from fonfig file and load into ConfigFile
+	// Load in YAML file from config file and load into ConfigFile
 	if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
 		log.Printf("config file does not exist: %v", err)
 		log.Print("no config file found, using environment variables only")
@@ -355,6 +372,7 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hashed)
 	if err != nil {
+		debugLog("Error signing JWT: %v", err)
 		return "", err
 	}
 	encodedSignature := base64.RawURLEncoding.EncodeToString(signature)
@@ -398,8 +416,8 @@ func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, e
 		return "", now, now, err
 	}
 	req.Header.Set(ContentType, FormURLEncoded)
+	req.Header.Set("User-Agent", "authzjwtbearerinjector")
 
-	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", now, now, err

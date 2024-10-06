@@ -99,4 +99,5 @@ The fields for the `local_token_` context extensions, `LOCAL_TOKEN_` environment
 
 ## Limitations
 
+- Timeouts for token exchange is set to timeout after 5 seconds.
 - Signing Algorithm: Only RS256 is supported for signing the JWT token.
