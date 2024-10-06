@@ -48,6 +48,7 @@ var (
 
 	tokenCache        = sync.Map{}
 	tokenSoftLifetime float32
+	createTokenMutex  = sync.Mutex{}
 
 	// Utility variables
 
@@ -86,11 +87,15 @@ func init() {
 }
 
 type CachedToken struct {
+	TokenValue CachedTokenValue
+	Mutex      sync.Mutex
+}
+
+type CachedTokenValue struct {
 	Token      string
 	Expiry     time.Time
 	SoftExpiry time.Time
 	Issued     time.Time
-	Mutex      sync.Mutex
 }
 
 // The YAML file configuration
@@ -551,95 +556,128 @@ func getCachedToken(claims map[string]string) (string, error) {
 	cachedEntry, exists := tokenCache.Load(cacheKey)
 
 	var cachedToken *CachedToken
+
+	if !exists {
+		// Step 3: Lock to ensure that only one goroutine can create a new token for the same cache key
+		createTokenMutex.Lock()
+		defer createTokenMutex.Unlock()
+
+		// Check again if the token was created while waiting for the lock
+		cachedEntry, exists = tokenCache.Load(cacheKey)
+
+		if !exists {
+			// Step 4: If no cached entry exists, create a new one with a locked mutex to block other requests
+			newCachedToken := &CachedToken{
+				Mutex: sync.Mutex{},
+			}
+			tokenCache.Store(cacheKey, newCachedToken)
+			cachedToken = newCachedToken
+
+			if debugLogEnabled {
+				log.Printf("Cache miss with token for: %s", cacheKey)
+			}
+		}
+	}
+
 	if exists {
-		// Type assert the cached entry as *CachedToken
+		// Step 5: Type assert the cached entry as *CachedToken
 		cachedToken = cachedEntry.(*CachedToken)
 
-		// Lock the cached token to ensure thread-safe access
-		cachedToken.Mutex.Lock()
-		defer cachedToken.Mutex.Unlock()
+		if debugLogEnabled {
+			// Token found, log how long until the token expires
+			timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
+			log.Printf("Token found in cache, expires in: %s", timeTillExpiry)
+			// And the soft expiration time
+			timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
+			log.Printf("Token found in cache, soft expires in: %s", timeTillSoftExpiry)
+		}
 
-		// Step 3: Check if the token is still within soft expiry
-		if time.Now().Before(cachedToken.SoftExpiry) {
+		// Step 6: Check if the token is still within soft expiry
+		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
 			if debugLogEnabled {
 				log.Printf("Returning cached token for: %s", cacheKey)
 			}
-
-			return cachedToken.Token, nil
-		}
-	} else {
-		// If no cached entry exists, create a new one with a locked mutex to block other requests
-		newCachedToken := &CachedToken{
-			Mutex: sync.Mutex{},
-		}
-		tokenCache.Store(cacheKey, newCachedToken)
-		cachedToken = newCachedToken
-
-		if debugLogEnabled {
-			log.Printf("Cache miss with token for: %s", cacheKey)
+			return cachedToken.TokenValue.Token, nil
 		}
 	}
 
-	// Step 4: Lock the token generation if it hasn't been done yet
+	if debugLogEnabled {
+		log.Printf("Waiting for lock on: %s", cacheKey)
+	}
+
+	// Step 7: Lock the token generation if it hasn't been done yet
 	cachedToken.Mutex.Lock()
 	defer cachedToken.Mutex.Unlock()
 
-	// Step 5: After locking, check again if the token is still valid
-	if time.Now().Before(cachedToken.SoftExpiry) {
-		return cachedToken.Token, nil
+	if debugLogEnabled {
+		log.Printf("Lock acquired on: %s", cacheKey)
 	}
 
-	// Step 6: If we reach here, we need to generate a new JWT
+	// Step 8: After locking, check again if the token is still valid
+	if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
+		if debugLogEnabled {
+			log.Printf("Returning cached generated after getting lock token for: %s", cacheKey)
+		}
+		return cachedToken.TokenValue.Token, nil
+	}
+
+	// Step 9: Generate a new JWT
 	localJWT, err := generateJWT(claims)
 	if err != nil {
-		// Return the cached token if it's still valid
-		if time.Now().Before(cachedToken.SoftExpiry) {
+		// If generation fails, return the cached token if it's still valid
+		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
 			if debugLogEnabled {
-				log.Printf("Soft expired token generate failed, using existing token : %s", cacheKey)
+				log.Printf("Soft expired token generate failed, using existing token: %s", cacheKey)
 			}
-
-			return cachedToken.Token, nil
+			return cachedToken.TokenValue.Token, nil
 		}
 
 		if debugLogEnabled {
 			log.Printf("Expired token generated failed: %s", cacheKey)
 		}
-
 		return "", err
 	}
 
-	// Step 7: Exchange the local JWT for an actual token
+	// Step 10: Exchange the local JWT for an actual token
 	token, expiry, issuedAt, err := exchangeJWTBearerForToken(localJWT)
 	if err != nil {
 		// If token exchange fails, return the cached token if it's still valid
-		if time.Now().Before(cachedToken.SoftExpiry) {
-
+		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
 			if debugLogEnabled {
-				log.Printf("Soft expired token exchange failed, using existing token : %s", cacheKey)
+				log.Printf("Soft expired token exchange failed, using existing token: %s", cacheKey)
 			}
-
-			return cachedToken.Token, nil
+			return cachedToken.TokenValue.Token, nil
 		}
 
 		if debugLogEnabled {
 			log.Printf("Expired token exchange failed: %s", cacheKey)
 		}
-
 		// If the cached token is also expired, return an error
 		return "", err
 	}
 
-	// Calculate soft expiry based on the configurable lifetime ratio
+	// Step 11: Calculate soft expiry based on the configurable lifetime ratio
 	lifetime := expiry.Sub(issuedAt)
 	softExpiry := time.Now().Add(time.Duration(float32(lifetime) * tokenSoftLifetime))
 
-	// Update the cached entry with the new token and expiry times
-	cachedToken.Token = token
-	cachedToken.Expiry = expiry
-	cachedToken.SoftExpiry = softExpiry
-	cachedToken.Issued = issuedAt
+	// Step 12: Update the cached token value
+	newCachedTokenValue := CachedTokenValue{
+		Token:      token,
+		Expiry:     expiry,
+		SoftExpiry: softExpiry,
+		Issued:     issuedAt,
+	}
+
+	cachedToken.TokenValue = newCachedTokenValue
 
 	if debugLogEnabled {
+		// Log how long until the token expires
+		timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
+		log.Printf("New token generated, expires in: %s", timeTillExpiry)
+		// And the soft expiration time
+		timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
+		log.Printf("New token generated, soft expires in: %s", timeTillSoftExpiry)
+
 		log.Printf("New token request successful: %s", cacheKey)
 	}
 
