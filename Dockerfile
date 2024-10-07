@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go gRPC server
-RUN go build -o server .
+RUN go build -mod=readonly -o server .
 
 # Use a minimal base image for running the compiled binary
 FROM gcr.io/distroless/base-debian12
