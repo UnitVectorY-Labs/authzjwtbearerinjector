@@ -64,17 +64,8 @@ func NewConfig() *Config {
 		}
 	}
 
-	// Parse the private key from the environment variables
-	envValPrivateKey := os.Getenv(envPrivateKey)
-	if envValPrivateKey != "" {
-		config.PrivateKey = envValPrivateKey
-	}
-
-	// Parse the private key id from the environment variables
-	envValPrivateKeyId := os.Getenv(envPrivateKeyId)
-	if envValPrivateKeyId != "" {
-		config.PrivateKeyId = envValPrivateKeyId
-	}
+	config.PrivateKey = overrideValueWithEnvVar(config.PrivateKey, envPrivateKey)
+	config.PrivateKeyId = overrideValueWithEnvVar(config.PrivateKeyId, envPrivateKeyId)
 
 	// Loop through all of the environment variables grabbing the LOCAL_TOKEN_ variables
 	for _, e := range os.Environ() {
@@ -88,29 +79,11 @@ func NewConfig() *Config {
 		}
 	}
 
-	// Parse the oauth2 token url from the environment variables
-	envValOauth2TokenURL := os.Getenv(envOauth2TokenURL)
-	if envValOauth2TokenURL != "" {
-		config.Oauth2.TokenURL = envValOauth2TokenURL
-	}
-
-	// Parse the oauth2 response field from the environment variables
-	envValOauth2ResponseField := os.Getenv(envOauth2ResponseField)
-	if envValOauth2ResponseField != "" {
-		config.Oauth2.ResponseField = envValOauth2ResponseField
-	}
-
-	// Parse the oauth2 client id from the environment variables
-	envValOauth2ClientId := os.Getenv(envOauth2ClientId)
-	if envValOauth2ClientId != "" {
-		config.Oauth2.ClientId = envValOauth2ClientId
-	}
-
-	// Parse the oauth2 audience from the environment variables
-	envValOauth2Audience := os.Getenv(envOauth2Audience)
-	if envValOauth2Audience != "" {
-		config.Oauth2.Audience = envValOauth2Audience
-	}
+	// OAuth token configuration
+	config.Oauth2.TokenURL = overrideValueWithEnvVar(config.Oauth2.TokenURL, envOauth2TokenURL)
+	config.Oauth2.ResponseField = overrideValueWithEnvVar(config.Oauth2.ResponseField, envOauth2ResponseField)
+	config.Oauth2.ClientId = overrideValueWithEnvVar(config.Oauth2.ClientId, envOauth2ClientId)
+	config.Oauth2.Audience = overrideValueWithEnvVar(config.Oauth2.Audience, envOauth2Audience)
 
 	// Parse the soft token lifetime from the environment variables
 	envValSoftTokenLifetime := os.Getenv(envSoftTokenLifetime)
@@ -143,4 +116,14 @@ func NewConfig() *Config {
 	}
 
 	return config
+}
+
+// Override value with environment variable if it exists
+func overrideValueWithEnvVar(currentValue string, envVarName string) string {
+	envVar := os.Getenv(envVarName)
+	if envVar != "" {
+		return envVar
+	} else {
+		return currentValue
+	}
 }
