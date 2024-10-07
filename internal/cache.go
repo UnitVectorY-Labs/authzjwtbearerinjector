@@ -95,28 +95,23 @@ func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataClaims ma
 	// Step 9: Generate a new JWT
 	localJWT, err := SignLocalJWT(config, privateKey, metadataClaims)
 	if err != nil {
-		// If generation fails, return the cached token if it's still valid
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			DebugLog("Soft expired token generate failed, using existing token: %s", cacheKey)
+			DebugLog("Soft expired token generation failed, using existing token: %s. Error: %v", cacheKey, err)
 			return cachedToken.TokenValue.Token, nil
 		}
-
-		DebugLog("Expired token generated failed: %s", cacheKey)
-		return "", err
+		DebugLog("Failed to generate new token: %s. Error: %v", cacheKey, err)
+		return "", fmt.Errorf("failed to generate new token: %w", err)
 	}
 
 	// Step 10: Exchange the local JWT for an actual token
 	token, expiry, issuedAt, err := ExchangeJWTBearerForToken(config, localJWT)
 	if err != nil {
-		// If token exchange fails, return the cached token if it's still valid
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			DebugLog("Soft expired token exchange failed, using existing token: %s", cacheKey)
+			DebugLog("Soft expired token exchange failed, using existing token: %s. Error: %v", cacheKey, err)
 			return cachedToken.TokenValue.Token, nil
 		}
-
-		DebugLog("Expired token exchange failed: %s", cacheKey)
-		// If the cached token is also expired, return an error
-		return "", err
+		DebugLog("Failed to exchange token: %s. Error: %v", cacheKey, err)
+		return "", fmt.Errorf("failed to exchange token: %w", err)
 	}
 
 	// Step 11: Calculate soft expiry based on the configurable lifetime ratio
