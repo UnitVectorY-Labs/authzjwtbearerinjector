@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -17,12 +16,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	authz "authzjwtbearerinjector/internal"
 
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
@@ -31,48 +30,22 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type/v3"
-	"gopkg.in/yaml.v3"
 )
 
 var (
-	debugLogEnabled bool
-
-	configEnvironment           ConfigEnvironment
-	configEnvironmentPrivateKey *rsa.PrivateKey
-
-	configFile           ConfigFile
-	configFilePrivateKey *rsa.PrivateKey
+	config     authz.Config
+	privateKey *rsa.PrivateKey
 
 	// Caching
 
-	tokenCache        = sync.Map{}
-	tokenSoftLifetime float32
-	createTokenMutex  = sync.Mutex{}
-
-	// Utility variables
-
-	pemKeyReplacer = strings.NewReplacer(
-		"-----BEGIN PRIVATE KEY-----", "",
-		"-----END PRIVATE KEY-----", "",
-		"\\n", "",
-		"\n", "",
-	)
+	tokenCache       = sync.Map{}
+	createTokenMutex = sync.Mutex{}
 
 	// Global reusable HTTP client
 	client *http.Client
 )
 
 const (
-	// Environment variable names
-	EnvConfigFilePath      = "CONFIG_FILE_PATH"
-	EnvSoftTokenLifetime   = "SOFT_TOKEN_LIFETIME"
-	EnvDebug               = "DEBUG"
-	EnvPrivateKey          = "PRIVATE_KEY"
-	EnvPrivateKeyId        = "PRIVATE_KEY_ID"
-	EnvOauth2TokenURL      = "OAUTH2_TOKEN_URL"
-	EnvOauth2ResponseField = "OAUTH2_RESPONSE_FIELD"
-	EnvOauth2ClientId      = "OAUTH2_CLIENT_ID"
-	EnvOauth2Audience      = "OAUTH2_AUDIENCE"
 
 	// Common header and grant type
 	POST                    = "POST"
@@ -94,18 +67,6 @@ const (
 )
 
 func init() {
-	// Get the tokenSoftLifetime from the environment variable
-	// If set, parse SOFT_TOKEN_LIFETIME as a float32 if not set defualt to 0.5, if out of bounds set to 0.5
-	tokenSoftLifetimeString := os.Getenv(EnvSoftTokenLifetime)
-	tokenSoftLifetimeParsed, err := strconv.ParseFloat(tokenSoftLifetimeString, 32)
-	if err != nil || tokenSoftLifetimeParsed < 0.0 || tokenSoftLifetimeParsed > 1.0 {
-		tokenSoftLifetimeParsed = 0.5
-	}
-	tokenSoftLifetime = float32(tokenSoftLifetimeParsed)
-
-	// Check if DEBUG logging is enabled via an environment variable
-	debugLogEnabled = os.Getenv(EnvDebug) == "true"
-
 	// Create a reusable HTTP client with a custom Transport to set the User-Agent header
 	genericTimeout := 5 * time.Second
 	client = &http.Client{
@@ -133,140 +94,21 @@ type CachedTokenValue struct {
 	Issued     time.Time
 }
 
-// The YAML file configuration
-type ConfigFile struct {
-	PrivateKey   string            `yaml:"private_key"`
-	PrivateKeyId string            `yaml:"private_key_id"`
-	LocalToken   map[string]string `yaml:"local_token"`
-	Oauth2       struct {
-		TokenURL      string `yaml:"token_url"`
-		ResponseField string `yaml:"response_field"`
-		ClientId      string `yaml:"client_id"`
-		Audience      string `yaml:"audience"`
-	} `yaml:"oauth2"`
-}
-
-// The Environment variable configuration
-type ConfigEnvironment struct {
-	PrivateKey   string
-	PrivateKeyId string
-	LocalToken   map[string]string
-	Oauth2       struct {
-		TokenURL      string
-		ResponseField string
-		ClientId      string
-		Audience      string
-	}
-}
-
 type authServer struct {
 	pb.UnimplementedAuthorizationServer
 }
 
-// Function for debug logging
-func debugLog(message string, v ...any) {
-	if debugLogEnabled {
-		log.Printf(message, v...)
-	}
-}
-
 func main() {
-	// Determine the config file path
-	configFilePath := os.Getenv(EnvConfigFilePath)
-	if configFilePath == "" {
-		configFilePath = "/app/config.yaml"
+
+	// Load in the config
+	config = *authz.NewConfig()
+
+	// Parse the private key
+	parsedPrivateKey, err := authz.ParsePrivateKey(config.PrivateKey)
+	if err != nil {
+		log.Fatalf("failed to parse private key: %v", err)
 	}
-
-	// Load in YAML file from config file and load into ConfigFile
-	if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
-		log.Printf("config file does not exist: %v", err)
-		log.Print("no config file found, using environment variables only")
-		configFile = ConfigFile{}
-	} else {
-		configFileContent, err := os.ReadFile(configFilePath)
-		if err != nil {
-			log.Fatalf("failed to read config file: %v", err)
-		}
-
-		err = yaml.Unmarshal(configFileContent, &configFile)
-		if err != nil {
-			log.Fatalf("failed to unmarshal config file: %v", err)
-		}
-
-		// Log the config file local token (int a loop) and oauth variables
-		if debugLogEnabled {
-			for k, v := range configFile.LocalToken {
-				debugLog("Config File Local Token: %s = %s", k, v)
-			}
-			debugLog("Config File OAuth2 Token URL: %s", configFile.Oauth2.TokenURL)
-			debugLog("Config File OAuth2 Response Field: %s", configFile.Oauth2.ResponseField)
-		}
-
-		// Parse the private key from the config file
-		if configFile.PrivateKey != "" {
-			loadedConfigFilePrivateKey, err := parsePrivateKey(configFile.PrivateKey)
-			if err != nil {
-				log.Fatalf("Error parsing private key: %v", err)
-			}
-			log.Print("Successfully parsed private key from config file")
-			configFilePrivateKey = loadedConfigFilePrivateKey
-		} else {
-			log.Print("No private key found in config file")
-			configFilePrivateKey = nil
-		}
-	}
-
-	// Load in the environment variables into ConfigEnvironment
-	configEnvironment = ConfigEnvironment{
-		PrivateKey:   os.Getenv(EnvPrivateKey),
-		PrivateKeyId: os.Getenv(EnvPrivateKeyId),
-		LocalToken:   map[string]string{},
-		Oauth2: struct {
-			TokenURL      string
-			ResponseField string
-			ClientId      string
-			Audience      string
-		}{
-			TokenURL:      os.Getenv(EnvOauth2TokenURL),
-			ResponseField: os.Getenv(EnvOauth2ResponseField),
-			ClientId:      os.Getenv(EnvOauth2ClientId),
-			Audience:      os.Getenv(EnvOauth2Audience),
-		},
-	}
-
-	// Loop through all of the environment variables grabbing the LOCAL_TOKEN_ variables
-	for _, e := range os.Environ() {
-		pair := strings.SplitN(e, "=", 2)
-		key := pair[0]
-		value := pair[1]
-
-		// If the variable starts with LOCAL_TOKEN_, add it to the local token map removing the prefix
-		if strings.HasPrefix(key, "LOCAL_TOKEN_") {
-			configEnvironment.LocalToken[strings.TrimPrefix(key, "LOCAL_TOKEN_")] = value
-		}
-	}
-
-	// Log the environment variables local token (int a loop) and oauth variables
-	if debugLogEnabled {
-		for k, v := range configEnvironment.LocalToken {
-			debugLog("Environment Local Token: %s = %s", k, v)
-		}
-		debugLog("Environment OAuth2 Token URL: %s", configEnvironment.Oauth2.TokenURL)
-		debugLog("Environment OAuth2 Response Field: %s", configEnvironment.Oauth2.ResponseField)
-	}
-
-	// Parse the private key from the environment variables
-	if configEnvironment.PrivateKey != "" {
-		loadedConfigEnvironmentPrivateKey, err := parsePrivateKey(configEnvironment.PrivateKey)
-		if err != nil {
-			log.Fatalf("Error parsing private key: %v", err)
-		}
-		log.Print("Successfully parsed private key from environment variables")
-		configEnvironmentPrivateKey = loadedConfigEnvironmentPrivateKey
-	} else {
-		log.Print("No private key found in environment variables")
-		configEnvironmentPrivateKey = nil
-	}
+	privateKey = parsedPrivateKey
 
 	// Start the gRPC server
 	lis, err := net.Listen("tcp", "0.0.0.0:50051")
@@ -286,71 +128,17 @@ func main() {
 	}
 }
 
-func parsePrivateKey(privateKeyString string) (*rsa.PrivateKey, error) {
-	// Remove the PEM header, footer, and any newlines so we can decode the key
-	privateKeyCleaned := pemKeyReplacer.Replace(privateKeyString)
-	privateKeyCleaned = strings.TrimSpace(privateKeyCleaned)
-
-	// Decode the Base64-encoded private key
-	decodedKey, err := base64.StdEncoding.DecodeString(privateKeyCleaned)
-	if err != nil {
-		log.Printf("failed to base64 decode private key: %v", err)
-		return nil, err
-	}
-
-	// Parse the PKCS#8 private key
-	parsedKey, err := x509.ParsePKCS8PrivateKey(decodedKey)
-	if err != nil {
-		log.Printf("failed to parse PKCS#8 private key: %v", err)
-		return nil, err
-	}
-
-	// Ensure the key is of type *rsa.PrivateKey
-	privateKey, ok := parsedKey.(*rsa.PrivateKey)
-	if !ok {
-		log.Println("not an RSA private key")
-		return nil, err
-	}
-
-	log.Println("Successfully parsed the RSA private key")
-	return privateKey, nil
-}
-
-// Gets the preferred private key to use for local token generation
-func getPrivateKey() (*rsa.PrivateKey, error) {
-	privateKey := configEnvironmentPrivateKey
-	if privateKey == nil {
-		privateKey = configFilePrivateKey
-		if privateKey == nil {
-			return nil, errors.New(ErrNoPrivateKey)
-		}
-	}
-	return privateKey, nil
-}
-
 func generateJWT(metadataClaims map[string]string) (string, error) {
 
-	debugLog("Generating JWT with metadata claims: %v", metadataClaims)
-
-	// Get the private key
-	privateKey, err := getPrivateKey()
-	if err != nil {
-		return "", err
-	}
+	authz.DebugLog("Generating JWT with metadata claims: %v", metadataClaims)
 
 	header := map[string]string{
 		"alg": RS256, // Only supporting RS256 for now
 		"typ": JWT,
 	}
 
-	// Pull the KID from the config file first if it is populated
-	if configFile.PrivateKeyId != "" {
-		header["kid"] = configFile.PrivateKeyId
-	}
-
-	// Pull the KID from the environment variables if it is populated
-	if configEnvironment.PrivateKeyId != "" {
-		header["kid"] = configEnvironment.PrivateKeyId
+	if config.PrivateKeyId != "" {
+		header["kid"] = config.PrivateKeyId
 	}
 
 	headerBytes, _ := json.Marshal(header)
@@ -359,26 +147,19 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 	// Payload
 	payload := map[string]interface{}{}
 
-	// Use the config file claims first, lower priority
-	for k, v := range configFile.LocalToken {
+	// Use the config file claims first
+	for k, v := range config.LocalToken {
 		payload[k] = v
 
 		// Log the claims
-		log.Printf("Added Config File Claim: %s = %s", k, v)
-	}
-
-	// The environment variables will overwrite the config file claims
-	for k, v := range configEnvironment.LocalToken {
-		payload[k] = v
-		// Log the claims
-		log.Printf("Added Environment Claim: %s = %s", k, v)
+		authz.DebugLog("Added Config File Claim: %s = %s", k, v)
 	}
 
 	// The metadata claims will overwrite the environment variables
 	for k, v := range metadataClaims {
 		payload[k] = v
 		// Log the claims
-		log.Printf("Added Metadata Claim: %s = %s", k, v)
+		authz.DebugLog("Added Metadata Claim: %s = %s", k, v)
 	}
 
 	// The iat and exp claims are always added to the payload
@@ -396,7 +177,7 @@ func generateJWT(metadataClaims map[string]string) (string, error) {
 
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hashed)
 	if err != nil {
-		debugLog("Error signing JWT: %v", err)
+		authz.DebugLog("Error signing JWT: %v", err)
 		return "", err
 	}
 	encodedSignature := base64.RawURLEncoding.EncodeToString(signature)
@@ -410,51 +191,24 @@ func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, e
 
 	now := time.Now()
 
-	debugLog("Exchanging JWT for token")
-
-	// Get the preferred token URL to use for token exchange
-	tokenURL := configEnvironment.Oauth2.TokenURL
-	if tokenURL == "" {
-		tokenURL = configFile.Oauth2.TokenURL
-		if tokenURL == "" {
-			return "", now, now, errors.New(ErrNoOauth2TokenURL)
-		}
-	}
-
-	// Get the preferred response field to use for token exchange
-	responseField := configEnvironment.Oauth2.ResponseField
-	if responseField == "" {
-		responseField = configFile.Oauth2.ResponseField
-		if responseField == "" {
-			return "", now, now, errors.New(ErrNoOauth2ResponseField)
-		}
-	}
+	authz.DebugLog("Exchanging JWT for token")
 
 	// Build the jwt-bearer token request
 	data := url.Values{}
 	data.Set(GrantType, OauthJwtBearerGrantType)
 	data.Set(Assertion, jwtToken)
 
-	// Add the clientId ifit is set in the config
-	if configFile.Oauth2.ClientId != "" {
-		data.Set("client_id", configFile.Oauth2.ClientId)
-	}
-	// Add the clientId if it is set in the environment variables
-	if configEnvironment.Oauth2.ClientId != "" {
-		data.Set("client_id", configEnvironment.Oauth2.ClientId)
+	// Add the clientId if it is set in the config
+	if config.Oauth2.ClientId != "" {
+		data.Set("client_id", config.Oauth2.ClientId)
 	}
 
 	// Add the audience if it is set in the config
-	if configFile.Oauth2.Audience != "" {
-		data.Set("audience", configFile.Oauth2.Audience)
+	if config.Oauth2.Audience != "" {
+		data.Set("audience", config.Oauth2.Audience)
 	}
 
-	// Add the audience if it is set in the environment variables
-	if configEnvironment.Oauth2.Audience != "" {
-		data.Set("audience", configEnvironment.Oauth2.Audience)
-	}
-
-	req, err := http.NewRequest(POST, tokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(POST, config.Oauth2.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", now, now, err
 	}
@@ -479,9 +233,9 @@ func exchangeJWTBearerForToken(jwtToken string) (string, time.Time, time.Time, e
 		return "", now, now, err
 	}
 
-	token, ok := respData[responseField].(string)
+	token, ok := respData[config.Oauth2.ResponseField].(string)
 	if !ok {
-		return "", now, now, errors.New("OAuth2 token endpoint response does not contain field " + responseField)
+		return "", now, now, errors.New("OAuth2 token endpoint response does not contain field " + config.Oauth2.ResponseField)
 	}
 
 	// Extract the expiration time
@@ -544,7 +298,7 @@ func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.Check
 	jwtToken, err := getCachedToken(metadataClaims)
 	elapsed := time.Since(start)
 
-	debugLog("getCachedToken took %s", elapsed)
+	authz.DebugLog("getCachedToken took %s", elapsed)
 
 	if err != nil {
 		log.Printf("Error getting cached token: %v", err)
@@ -608,7 +362,7 @@ func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
 			}
 		}
 	} else {
-		debugLog("%s not found in filter metadata", MetadataLocalTokenNamespace)
+		authz.DebugLog("%s not found in filter metadata", MetadataLocalTokenNamespace)
 	}
 
 	return claims
@@ -618,7 +372,7 @@ func getCachedToken(claims map[string]string) (string, error) {
 	// Step 1: Hash the claims to create a unique cache key
 	cacheKey := hashClaims(claims)
 
-	debugLog("getCachedToken: %s", cacheKey)
+	authz.DebugLog("getCachedToken: %s", cacheKey)
 
 	// Step 2: Try to load the cached token entry
 	cachedEntry, exists := tokenCache.Load(cacheKey)
@@ -641,7 +395,7 @@ func getCachedToken(claims map[string]string) (string, error) {
 			tokenCache.Store(cacheKey, newCachedToken)
 			cachedToken = newCachedToken
 
-			debugLog("Cache miss with token for: %s", cacheKey)
+			authz.DebugLog("Cache miss with token for: %s", cacheKey)
 		}
 	}
 
@@ -649,33 +403,33 @@ func getCachedToken(claims map[string]string) (string, error) {
 		// Step 5: Type assert the cached entry as *CachedToken
 		cachedToken = cachedEntry.(*CachedToken)
 
-		if debugLogEnabled {
+		if authz.IsDebugLogEnabled() {
 			// Token found, log how long until the token expires
 			timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
-			debugLog("Token found in cache, expires in: %s", timeTillExpiry)
+			authz.DebugLog("Token found in cache, expires in: %s", timeTillExpiry)
 			// And the soft expiration time
 			timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
-			debugLog("Token found in cache, soft expires in: %s", timeTillSoftExpiry)
+			authz.DebugLog("Token found in cache, soft expires in: %s", timeTillSoftExpiry)
 		}
 
 		// Step 6: Check if the token is still within soft expiry
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			debugLog("Returning cached token for: %s", cacheKey)
+			authz.DebugLog("Returning cached token for: %s", cacheKey)
 			return cachedToken.TokenValue.Token, nil
 		}
 	}
 
-	debugLog("Waiting for lock on: %s", cacheKey)
+	authz.DebugLog("Waiting for lock on: %s", cacheKey)
 
 	// Step 7: Lock the token generation if it hasn't been done yet
 	cachedToken.Mutex.Lock()
 	defer cachedToken.Mutex.Unlock()
 
-	debugLog("Lock acquired on: %s", cacheKey)
+	authz.DebugLog("Lock acquired on: %s", cacheKey)
 
 	// Step 8: After locking, check again if the token is still valid
 	if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-		debugLog("Returning cached generated after getting lock token for: %s", cacheKey)
+		authz.DebugLog("Returning cached generated after getting lock token for: %s", cacheKey)
 		return cachedToken.TokenValue.Token, nil
 	}
 
@@ -684,11 +438,11 @@ func getCachedToken(claims map[string]string) (string, error) {
 	if err != nil {
 		// If generation fails, return the cached token if it's still valid
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			debugLog("Soft expired token generate failed, using existing token: %s", cacheKey)
+			authz.DebugLog("Soft expired token generate failed, using existing token: %s", cacheKey)
 			return cachedToken.TokenValue.Token, nil
 		}
 
-		debugLog("Expired token generated failed: %s", cacheKey)
+		authz.DebugLog("Expired token generated failed: %s", cacheKey)
 		return "", err
 	}
 
@@ -697,18 +451,18 @@ func getCachedToken(claims map[string]string) (string, error) {
 	if err != nil {
 		// If token exchange fails, return the cached token if it's still valid
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			debugLog("Soft expired token exchange failed, using existing token: %s", cacheKey)
+			authz.DebugLog("Soft expired token exchange failed, using existing token: %s", cacheKey)
 			return cachedToken.TokenValue.Token, nil
 		}
 
-		debugLog("Expired token exchange failed: %s", cacheKey)
+		authz.DebugLog("Expired token exchange failed: %s", cacheKey)
 		// If the cached token is also expired, return an error
 		return "", err
 	}
 
 	// Step 11: Calculate soft expiry based on the configurable lifetime ratio
 	lifetime := expiry.Sub(issuedAt)
-	softExpiry := time.Now().Add(time.Duration(float32(lifetime) * tokenSoftLifetime))
+	softExpiry := time.Now().Add(time.Duration(float32(lifetime) * float32(config.SoftTokenLifetime)))
 
 	// Step 12: Update the cached token value
 	newCachedTokenValue := CachedTokenValue{
@@ -720,15 +474,15 @@ func getCachedToken(claims map[string]string) (string, error) {
 
 	cachedToken.TokenValue = newCachedTokenValue
 
-	if debugLogEnabled {
+	if authz.IsDebugLogEnabled() {
 		// Log how long until the token expires
 		timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
-		debugLog("New token generated, expires in: %s", timeTillExpiry)
+		authz.DebugLog("New token generated, expires in: %s", timeTillExpiry)
 		// And the soft expiration time
 		timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
-		debugLog("New token generated, soft expires in: %s", timeTillSoftExpiry)
+		authz.DebugLog("New token generated, soft expires in: %s", timeTillSoftExpiry)
 
-		debugLog("New token request successful: %s", cacheKey)
+		authz.DebugLog("New token request successful: %s", cacheKey)
 	}
 
 	return token, nil
