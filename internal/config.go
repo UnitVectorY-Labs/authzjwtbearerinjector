@@ -10,34 +10,42 @@ import (
 )
 
 const (
-	// environment variable names
+	// Environment Variable names
 	envConfigFilePath      = "CONFIG_FILE_PATH"
-	envSoftTokenLifetime   = "SOFT_TOKEN_LIFETIME"
 	envPrivateKey          = "PRIVATE_KEY"
-	envPrivateKeyId        = "PRIVATE_KEY_ID"
 	envOauth2TokenURL      = "OAUTH2_TOKEN_URL"
 	envOauth2ResponseField = "OAUTH2_RESPONSE_FIELD"
-	envOauth2ClientId      = "OAUTH2_CLIENT_ID"
-	envOauth2Audience      = "OAUTH2_AUDIENCE"
+	envSoftTokenLifetime   = "SOFT_TOKEN_LIFETIME"
+
+	// Environment Variables Prefixes
+	envTokenHeaderPrefix  = "TOKEN_HEADER_"
+	envTokenPayloadPrefix = "TOKEN_PAYLOAD_"
+	envOauthRequestPrefix = "OAUTH_REQUEST_"
 )
 
 type Config struct {
-	PrivateKey   string            `yaml:"private_key"`
-	PrivateKeyId string            `yaml:"private_key_id"`
-	LocalToken   map[string]string `yaml:"local_token"`
-	Oauth2       struct {
-		TokenURL      string `yaml:"token_url"`
-		ResponseField string `yaml:"response_field"`
-		ClientId      string `yaml:"client_id"`
-		Audience      string `yaml:"audience"`
-	} `yaml:"oauth2"`
-	SoftTokenLifetime float64 `yaml:"soft_token_lifetime"`
+	PrivateKey string `yaml:"private_key"`
+
+	// Environment Variable prefix TOKEN_HEADER_
+	TokenHeader map[string]string `yaml:"token_header"`
+
+	// Environment Variable prefix TOKEN_PAYLOAD_
+	TokenPayload map[string]string `yaml:"token_payload"`
+
+	// Environment Variable prefix OAUTH_REQUEST_
+	OauthRequest map[string]string `yaml:"oauth_request"`
+
+	OauthTokenUrl      string  `yaml:"oauth_token_url"`
+	OauthResponseField string  `yaml:"oauth_response_field"`
+	SoftTokenLifetime  float64 `yaml:"soft_token_lifetime"`
 }
 
 // NewConfig is a constructor function that creates and returns a new Config struct
 func NewConfig() *Config {
 	config := &Config{
-		LocalToken: make(map[string]string),
+		TokenHeader:  make(map[string]string),
+		TokenPayload: make(map[string]string),
+		OauthRequest: make(map[string]string),
 	}
 
 	// Determine the config file path
@@ -65,25 +73,24 @@ func NewConfig() *Config {
 	}
 
 	config.PrivateKey = overrideValueWithEnvVar(config.PrivateKey, envPrivateKey)
-	config.PrivateKeyId = overrideValueWithEnvVar(config.PrivateKeyId, envPrivateKeyId)
 
-	// Loop through all of the environment variables grabbing the LOCAL_TOKEN_ variables
+	// Loop through all of the environment variables grabbing the pattern variables
 	for _, e := range os.Environ() {
 		pair := strings.SplitN(e, "=", 2)
 		key := pair[0]
 		value := pair[1]
 
-		// If the variable starts with LOCAL_TOKEN_, overwrite the value from the config file
-		if strings.HasPrefix(key, "LOCAL_TOKEN_") {
-			config.LocalToken[strings.TrimPrefix(key, "LOCAL_TOKEN_")] = value
+		if strings.HasPrefix(key, envTokenHeaderPrefix) {
+			config.TokenHeader[strings.TrimPrefix(key, envTokenHeaderPrefix)] = value
+		} else if strings.HasPrefix(key, envTokenPayloadPrefix) {
+			config.TokenPayload[strings.TrimPrefix(key, envTokenPayloadPrefix)] = value
+		} else if strings.HasPrefix(key, envOauthRequestPrefix) {
+			config.OauthRequest[strings.TrimPrefix(key, envOauthRequestPrefix)] = value
 		}
 	}
 
-	// OAuth token configuration
-	config.Oauth2.TokenURL = overrideValueWithEnvVar(config.Oauth2.TokenURL, envOauth2TokenURL)
-	config.Oauth2.ResponseField = overrideValueWithEnvVar(config.Oauth2.ResponseField, envOauth2ResponseField)
-	config.Oauth2.ClientId = overrideValueWithEnvVar(config.Oauth2.ClientId, envOauth2ClientId)
-	config.Oauth2.Audience = overrideValueWithEnvVar(config.Oauth2.Audience, envOauth2Audience)
+	config.OauthTokenUrl = overrideValueWithEnvVar(config.OauthTokenUrl, envOauth2TokenURL)
+	config.OauthResponseField = overrideValueWithEnvVar(config.OauthResponseField, envOauth2ResponseField)
 
 	// Parse the soft token lifetime from the environment variables
 	envValSoftTokenLifetime := os.Getenv(envSoftTokenLifetime)
@@ -103,16 +110,30 @@ func NewConfig() *Config {
 
 	// Log the configuration if debug logging is enabled
 	if debugLogEnabled {
-		DebugLog("Config - Private Key ID: %s", config.PrivateKeyId)
 
-		for k, v := range config.LocalToken {
-			DebugLog("Config - Local Token: %s = %s", k, v)
+		for k, v := range config.TokenHeader {
+			DebugLog("Config - Token Header: %s = %s", k, v)
 		}
-		DebugLog("Config - OAuth2 Token URL: %s", config.Oauth2.TokenURL)
-		DebugLog("Config - OAuth2 Response Field: %s", config.Oauth2.ResponseField)
-		DebugLog("Config - OAuth2 Client ID: %s", config.Oauth2.ClientId)
-		DebugLog("Config - OAuth2 Audience: %s", config.Oauth2.Audience)
+
+		for k, v := range config.TokenPayload {
+			DebugLog("Config - Token Payload: %s = %s", k, v)
+		}
+
+		for k, v := range config.OauthRequest {
+			DebugLog("Config - OAuth2 Request: %s = %s", k, v)
+		}
+
+		DebugLog("Config - OAuth2 Token URL: %s", config.OauthTokenUrl)
 		DebugLog("Config - Soft Token Lifetime: %f", config.SoftTokenLifetime)
+	}
+
+	// Make sure the required components are set otherwise panic
+	if config.PrivateKey == "" {
+		log.Fatal("private_key is required")
+	} else if config.OauthTokenUrl == "" {
+		log.Fatal("oauth_token_url is required")
+	} else if config.OauthResponseField == "" {
+		log.Fatal("oauth_response_field is required")
 	}
 
 	return config

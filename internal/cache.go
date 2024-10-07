@@ -27,9 +27,9 @@ type CachedTokenValue struct {
 	Issued     time.Time
 }
 
-func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataClaims map[string]string) (string, error) {
-	// Step 1: Hash the metadataClaims to create a unique cache key
-	cacheKey := hashClaims(metadataClaims)
+func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataTokenHeader map[string]string, metadataTokenPayload map[string]string, metadataOauthRequest map[string]string) (string, error) {
+	// Step 1: Hash the metadata Claims to create a unique cache key
+	cacheKey := hashClaims(metadataTokenHeader, metadataTokenPayload, metadataOauthRequest)
 
 	DebugLog("getCachedToken: %s", cacheKey)
 
@@ -93,7 +93,7 @@ func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataClaims ma
 	}
 
 	// Step 9: Generate a new JWT
-	localJWT, err := SignLocalJWT(config, privateKey, metadataClaims)
+	localJWT, err := SignLocalJWT(config, privateKey, metadataTokenHeader, metadataTokenPayload)
 	if err != nil {
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
 			DebugLog("Soft expired token generation failed, using existing token: %s. Error: %v", cacheKey, err)
@@ -104,7 +104,7 @@ func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataClaims ma
 	}
 
 	// Step 10: Exchange the local JWT for an actual token
-	token, expiry, issuedAt, err := ExchangeJWTBearerForToken(config, localJWT)
+	token, expiry, issuedAt, err := ExchangeJWTBearerForToken(config, localJWT, metadataOauthRequest)
 	if err != nil {
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
 			DebugLog("Soft expired token exchange failed, using existing token: %s. Error: %v", cacheKey, err)
@@ -142,18 +142,31 @@ func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataClaims ma
 	return token, nil
 }
 
-func hashClaims(claims map[string]string) string {
+func hashClaims(metadataTokenHeader map[string]string, metadataTokenPayload map[string]string, metadataOauthRequest map[string]string) string {
 	h := sha256.New()
-	// Extract the keys from the map and sort them
-	keys := make([]string, 0, len(claims))
-	for k := range claims {
+
+	// Combine all maps into a single map with prefixes to separate them
+	combinedClaims := make(map[string]string)
+	for k, v := range metadataTokenHeader {
+		combinedClaims["header_"+k] = v
+	}
+	for k, v := range metadataTokenPayload {
+		combinedClaims["payload_"+k] = v
+	}
+	for k, v := range metadataOauthRequest {
+		combinedClaims["oauth_"+k] = v
+	}
+
+	// Extract the keys from the combined map and sort them
+	keys := make([]string, 0, len(combinedClaims))
+	for k := range combinedClaims {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	// Write the sorted key-value pairs to the hash
 	for _, k := range keys {
-		h.Write([]byte(fmt.Sprintf("%s:%v", k, claims[k])))
+		h.Write([]byte(fmt.Sprintf("%s:%v", k, combinedClaims[k])))
 	}
 
 	// Return the final hash as a hexadecimal string

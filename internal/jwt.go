@@ -7,7 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -15,48 +18,47 @@ const (
 	jwt   = "JWT"
 )
 
-func SignLocalJWT(config Config, privateKey *rsa.PrivateKey, metadataClaims map[string]string) (string, error) {
+func SignLocalJWT(config Config, privateKey *rsa.PrivateKey, metadataTokenHeader map[string]string, metadataTokenPayload map[string]string) (string, error) {
 
-	DebugLog("Generating JWT with metadata claims: %v", metadataClaims)
+	// Build the Header
+	header := map[string]string{}
 
-	header := map[string]string{
-		"alg": rs256, // Only supporting RS256 for now
-		"typ": jwt,
+	for k, v := range config.TokenHeader {
+		header[k] = replaceDynamicVariables(v)
+		DebugLog("Added Header: %s = %s", k, v)
 	}
 
-	if config.PrivateKeyId != "" {
-		header["kid"] = config.PrivateKeyId
+	for k, v := range metadataTokenHeader {
+		header[k] = replaceDynamicVariables(v)
+		DebugLog("Added Header (Metadata): %s = %s", k, v)
 	}
+
+	header["alg"] = rs256
+	header["typ"] = jwt
 
 	headerBytes, _ := json.Marshal(header)
 	encodedHeader := base64.RawURLEncoding.EncodeToString(headerBytes)
 
-	// Payload
+	// Build the Payload
 	payload := map[string]interface{}{}
 
-	// Use the config file claims first
-	for k, v := range config.LocalToken {
-		payload[k] = v
-
-		// Log the claims
-		DebugLog("Added Config File Claim: %s = %s", k, v)
+	for k, v := range config.TokenPayload {
+		payload[k] = replaceDynamicVariables(v)
+		DebugLog("Added Payload Claim: %s = %s", k, v)
 	}
 
-	// The metadata claims will overwrite the environment variables
-	for k, v := range metadataClaims {
-		payload[k] = v
-		// Log the claims
-		DebugLog("Added Metadata Claim: %s = %s", k, v)
+	for k, v := range metadataTokenPayload {
+		payload[k] = replaceDynamicVariables(v)
+		DebugLog("Added Payload Claim (Metadata): %s = %s", k, v)
 	}
 
-	// The iat and exp claims are always added to the payload
 	payload["iat"] = time.Now().Unix()
 	payload["exp"] = time.Now().Add(time.Hour).Unix() // Defaulting to industry standard of 1 hour
 
 	payloadBytes, _ := json.Marshal(payload)
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
 
-	// Signature
+	// Create the signature
 	dataToSign := encodedHeader + "." + encodedPayload
 	hash := sha256.New()
 	hash.Write([]byte(dataToSign))
@@ -67,9 +69,18 @@ func SignLocalJWT(config Config, privateKey *rsa.PrivateKey, metadataClaims map[
 		DebugLog("Error signing JWT: %v", err)
 		return "", err
 	}
+
 	encodedSignature := base64.RawURLEncoding.EncodeToString(signature)
 
-	// Final JWT
+	// Build the final JWT
 	jwtToken := encodedHeader + "." + encodedPayload + "." + encodedSignature
+
 	return jwtToken, nil
+}
+
+func replaceDynamicVariables(input string) string {
+	if strings.Contains(input, "${{UUID}}") {
+		return strings.ReplaceAll(input, "${{UUID}}", uuid.New().String())
+	}
+	return input
 }

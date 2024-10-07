@@ -24,7 +24,9 @@ var (
 )
 
 const (
-	metadataLocalTokenNamespace = "com.unitvectory.authzjwtbearerinjector.localtoken"
+	metadataTokenHeaderNamespace  = "com.unitvectory.authzjwtbearerinjector.tokenheader"
+	metadataTokenPayloadNamespace = "com.unitvectory.authzjwtbearerinjector.tokenpayload"
+	metadataOauthRequestNamespace = "com.unitvectory.authzjwtbearerinjector.oauthrequest"
 )
 
 type authServer struct {
@@ -63,11 +65,13 @@ func main() {
 
 func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResponse, error) {
 
-	metadataClaims := extractMetadataClaims(req)
+	metadataTokenHeader := extractMetadataClaims(req, metadataTokenHeaderNamespace)
+	metadataTokenPayload := extractMetadataClaims(req, metadataTokenPayloadNamespace)
+	metadataOauthRequest := extractMetadataClaims(req, metadataOauthRequestNamespace)
 
 	// Get the cached token
 	start := time.Now()
-	jwtToken, err := authz.GetCachedToken(config, privateKey, metadataClaims)
+	jwtToken, err := authz.GetCachedToken(config, privateKey, metadataTokenHeader, metadataTokenPayload, metadataOauthRequest)
 	elapsed := time.Since(start)
 	authz.DebugLog("getCachedToken took %s", elapsed)
 
@@ -116,17 +120,17 @@ func createErrorResponse() *pb.CheckResponse {
 	return response
 }
 
-func extractMetadataClaims(req *pb.CheckRequest) map[string]string {
+func extractMetadataClaims(req *pb.CheckRequest, namespace string) map[string]string {
 	claims := make(map[string]string)
 	filterMetadata := req.Attributes.GetRouteMetadataContext().GetFilterMetadata()
-	if metadata, ok := filterMetadata[metadataLocalTokenNamespace]; ok {
+	if metadata, ok := filterMetadata[namespace]; ok {
 		if fields := metadata.GetFields(); fields != nil {
 			for key, value := range fields {
 				claims[key] = value.GetStringValue()
 			}
 		}
 	} else {
-		authz.DebugLog("%s not found in filter metadata", metadataLocalTokenNamespace)
+		authz.DebugLog("%s not found in filter metadata", namespace)
 	}
 
 	return claims

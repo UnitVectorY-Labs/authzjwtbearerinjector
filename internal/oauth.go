@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -18,12 +20,9 @@ var (
 )
 
 const (
-	post                    = "POST"
-	contentType             = "Content-Type"
-	formURLEncoded          = "application/x-www-form-urlencoded"
-	oAuthJwtBearerGrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-	grantType               = "grant_type"
-	assertion               = "assertion"
+	post           = "POST"
+	contentType    = "Content-Type"
+	formURLEncoded = "application/x-www-form-urlencoded"
 )
 
 func init() {
@@ -42,7 +41,7 @@ func init() {
 	}
 }
 
-func ExchangeJWTBearerForToken(config Config, jwtToken string) (string, time.Time, time.Time, error) {
+func ExchangeJWTBearerForToken(config Config, jwt string, metadataOauthRequest map[string]string) (string, time.Time, time.Time, error) {
 
 	now := time.Now()
 
@@ -50,20 +49,18 @@ func ExchangeJWTBearerForToken(config Config, jwtToken string) (string, time.Tim
 
 	// Build the jwt-bearer token request
 	data := url.Values{}
-	data.Set(grantType, oAuthJwtBearerGrantType)
-	data.Set(assertion, jwtToken)
 
-	// Add the clientId if it is set in the config
-	if config.Oauth2.ClientId != "" {
-		data.Set("client_id", config.Oauth2.ClientId)
+	for k, v := range config.OauthRequest {
+		data.Set(k, replaceJwtVariables(v, jwt))
+		DebugLog("Request Attribute: %s = %s", k, v)
 	}
 
-	// Add the audience if it is set in the config
-	if config.Oauth2.Audience != "" {
-		data.Set("audience", config.Oauth2.Audience)
+	for k, v := range metadataOauthRequest {
+		data.Set(k, replaceJwtVariables(v, jwt))
+		DebugLog("Request Attribute (Metadata): %s = %s", k, v)
 	}
 
-	req, err := http.NewRequest(post, config.Oauth2.TokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(post, config.OauthTokenUrl, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", now, now, err
 	}
@@ -88,9 +85,9 @@ func ExchangeJWTBearerForToken(config Config, jwtToken string) (string, time.Tim
 		return "", now, now, err
 	}
 
-	token, ok := respData[config.Oauth2.ResponseField].(string)
+	token, ok := respData[config.OauthResponseField].(string)
 	if !ok {
-		return "", now, now, errors.New("OAuth2 token endpoint response does not contain field " + config.Oauth2.ResponseField)
+		return "", now, now, errors.New("OAuth2 token endpoint response does not contain field " + config.OauthResponseField)
 	}
 
 	// Extract the expiration time
@@ -142,4 +139,14 @@ func extractExpirationClaims(token string) (time.Time, time.Time) {
 
 	// Return the extracted or default values
 	return expirationTime, issuedAtTime
+}
+
+func replaceJwtVariables(input string, jwt string) string {
+	if strings.Contains(input, "${{JWT}}") {
+		input = strings.ReplaceAll(input, "${{JWT}}", jwt)
+	}
+	if strings.Contains(input, "${{UUID}}") {
+		input = strings.ReplaceAll(input, "${{UUID}}", uuid.New().String())
+	}
+	return input
 }
