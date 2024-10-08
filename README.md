@@ -180,7 +180,7 @@ metadata:
       target_audience: https://app.example.com
 ```
 
-## Google Service Account Example
+## Google Service Account for Cloud Run Example
 
 THe following is a complete example of a `authzjwtbearerinjector` YAML configuration file for a Google Service Account used to get an identity token to send to the backend. It is worth emphasizing this approach is not recommended for Google Service Accounts as they have a built-in mechanism to get identity tokens. This is only an example of how to configure the service to work with a Google Service Account for environments outside of GCP that would use an identity token to authenticate to a backend service such as a Google Cloud Run service utilizing Envoy Proxy.
 
@@ -208,6 +208,85 @@ oauth_request:
 oauth_token_url: https://oauth2.googleapis.com/token
 oauth_response_field: id_token
 ```
+
+The following is an example of a minimal Envoy Proxy configuration that uses the `authzjwtbearerinjector` service to get an identity token for a Google Service Account to send to a Google Cloud Run service.  This example uses the domain `example.com` and the backend service is listening on port 443.  The intent of this example is to have this backend domain be a service hosted on Cloud Run protected by a GCP Service Account.  The `target_audience` is set in the metadata which means it does not need to be set in the configuration file as shown in the above example, this is specifically useful as multiple routes can have different audiences generated for different backend services.
+
+```yaml
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 8080
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: local_service
+              domains:
+              - "*"  # Match all domains
+              routes:
+              - match:
+                  prefix: "/"  # Match all paths
+                route:
+                  cluster: backend
+                  host_rewrite_literal: example.com
+                metadata:
+                  filter_metadata:
+                    com.unitvectory.authzjwtbearerinjector.tokenpayload:
+                      target_audience: https://example.com # Specify the desired audience for the identity token
+          http_filters:
+          - name: envoy.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              failure_mode_allow: false
+              allowed_headers:
+                patterns:
+                  - exact: ''
+              route_metadata_context_namespaces:
+                - com.unitvectory.authzjwtbearerinjector.tokenheader
+                - com.unitvectory.authzjwtbearerinjector.tokenpayload
+                - com.unitvectory.authzjwtbearerinjector.oauthrequest
+              grpc_service:
+                google_grpc:
+                  target_uri: "127.0.0.1:50051"
+                  stat_prefix: ext_authz
+                timeout: 5s
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+  - name: backend
+    connect_timeout: 10s
+    type: LOGICAL_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: backend
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: example.com
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: example.com
+        common_tls_context:
+          tls_params:
+            tls_minimum_protocol_version: TLSv1_2
+```
+
+This Envoy Proxy configuration is used to demonstrate how to configure `authzjwtbearerinjector` with ExtAuthz and does not include all the necessary configuration for a production deployment.  The configuration should be customized to fit the specific needs of the deployment.
 
 ## Limitations
 
