@@ -178,6 +178,35 @@ metadata:
       target_audience: https://app.example.com
 ```
 
+## Google Service Account Example
+
+THe following is a complete example of a `authzjwtbearerinjector` YAML configuration file for a Google Service Account used to get an identity token to send to the backend. It is worth emphasizing this approach is not recommended for Google Service Accounts as they have a built-in mechanism to get identity tokens. This is only an example of how to configure the service to work with a Google Service Account for environments outside of GCP that would use an identity token to authenticate to a backend service such as a Google Cloud Run service utilizing Envoy Proxy.
+
+```yaml
+# Replace with the private key for your service account
+private_key: |
+  -----BEGIN PRIVATE KEY-----
+  MIIEvQIBADANBgkqhkiG9w0BAQE
+  ...
+  -----END PRIVATE KEY-----
+
+token_header:
+  kid: 0000000000000000000000000000000000000000 # Replace with the private_key_id for your service account
+
+token_payload:
+  iss: example-service-account@your-project-id.iam.gserviceaccount.com # Replace with your service account email
+  sub: example-service-account@your-project-id.iam.gserviceaccount.com # Replace with your service account email
+  aud: https://oauth2.googleapis.com/token
+  target_audience: https://example.com # Specify the desired audience for the identity token
+
+oauth_request:
+  grant_type: urn:ietf:params:oauth:grant-type:jwt-bearer
+  assertion: ${{JWT}}
+
+oauth_token_url: https://oauth2.googleapis.com/token
+oauth_response_field: id_token
+```
+
 ## Limitations
 
 - Timeouts for token exchange is set to timeout after 5 seconds. Envoy proxy configuration should be set to match.
