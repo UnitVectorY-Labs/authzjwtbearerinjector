@@ -1,3 +1,5 @@
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/licenses/MIT) [![Active](https://img.shields.io/badge/Status-Active-green)](https://guide.unitvectorylabs.com/bestpractices/status/#active)
+
 # authzjwtbearerinjector
 
 A GRPC-based ExtAuthz service for Envoy Proxy that implements the jwt-bearer flow, injecting authentication credentials to backend services.
