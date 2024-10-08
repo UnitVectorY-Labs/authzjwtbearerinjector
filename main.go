@@ -5,6 +5,8 @@ import (
 	"crypto/rsa"
 	"log"
 	"net"
+	"os"
+	"strconv"
 	"time"
 
 	authz "authzjwtbearerinjector/internal"
@@ -45,8 +47,20 @@ func main() {
 	}
 	privateKey = parsedPrivateKey
 
+	// Determine the port to listen on
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "50051"
+	}
+
+	// Validate the port
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 1 || portNum > 65535 {
+		log.Fatalf("invalid port: %v", port)
+	}
+
 	// Start the gRPC server
-	lis, err := net.Listen("tcp", "0.0.0.0:50051")
+	lis, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
@@ -57,7 +71,7 @@ func main() {
 	// Enable gRPC reflection
 	reflection.Register(grpcServer)
 
-	log.Printf("authzjwtbearerinjector service listening on :50051...")
+	log.Printf("authzjwtbearerinjector service listening on :%s...", port)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
