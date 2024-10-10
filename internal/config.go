@@ -43,9 +43,10 @@ type Config struct {
 // NewConfig is a constructor function that creates and returns a new Config struct
 func NewConfig() *Config {
 	config := &Config{
-		TokenHeader:  make(map[string]string),
-		TokenPayload: make(map[string]string),
-		OauthRequest: make(map[string]string),
+		TokenHeader:       make(map[string]string),
+		TokenPayload:      make(map[string]string),
+		OauthRequest:      make(map[string]string),
+		SoftTokenLifetime: 0.5,
 	}
 
 	// Determine the config file path
