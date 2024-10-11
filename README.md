@@ -14,7 +14,7 @@ This service is implemented in Go and is intended to run as a sidecar to the Env
 
 There are multiple ways to configure `authzjwtbearerinjector` using a YAML configuration file, environment variables, or Envoy Proxy route metadata.  If the same configuration parameter is provided multiple ways the following order of precedence is used: configuration file used first, environment variables overwrite configuration file, and route metadata overwrites everything else.
 
-The config YAML file by default is loaded in from `/app/config.yaml` in the Docker image and can be injected to that location.  The location of the config file can be overridden by setting an alternative path the the envirionment variable `CONFIG_FILE_PATH`.
+The config YAML file by default is loaded in from `/app/config.yaml` in the Docker image and can be injected into that location.  The location of the config file can be overridden by setting an alternative path to the environment variable `CONFIG_FILE_PATH`.
 
 The following parameters must be configured with either the YAML configuration or environment variables and are mandatory for the service to start.
 
@@ -48,7 +48,7 @@ token_header:
   kid: 0000000000000000000000000000000000000000
 ```
 
-environment Variable:
+Environment Variable:
 
 ```bash
 export TOKEN_HEADER_kid=0000000000000000000000000000000000000000
@@ -70,7 +70,7 @@ The JWT Payload by default will include the following claims which cannot be cha
 ```json
 {
   "exp": 1728346210,
-  "iat": 1728342610,
+  "iat": 1728342610
 }
 ```
 
@@ -88,7 +88,7 @@ token_payload:
   jti: ${{UUID}}
 ```
 
-environment Variable:
+Environment Variable:
 
 ```bash
 export TOKEN_PAYLOAD_iss=https://issuer.example.com
@@ -119,7 +119,7 @@ oauth_request:
   assertion: ${{JWT}}
 ```
 
-environment Variable:
+Environment Variable:
 
 ```bash
 export OAUTH_REQUEST_grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
@@ -193,7 +193,7 @@ metadata:
 
 ## Google Service Account for Cloud Run Example
 
-THe following is a complete example of a `authzjwtbearerinjector` YAML configuration file for a Google Service Account used to get an identity token to send to the backend. It is worth emphasizing this approach is not recommended for Google Service Accounts as they have a built-in mechanism to get identity tokens. This is only an example of how to configure the service to work with a Google Service Account for environments outside of GCP that would use an identity token to authenticate to a backend service such as a Google Cloud Run service utilizing Envoy Proxy.
+The following is a complete example of a `authzjwtbearerinjector` YAML configuration file for a Google Service Account used to get an identity token to send to the backend. It is worth emphasizing this approach is not recommended for Google Service Accounts as they have a built-in mechanism to get identity tokens. This is only an example of how to configure the service to work with a Google Service Account for environments outside of GCP that would use an identity token to authenticate to a backend service such as a Google Cloud Run service utilizing Envoy Proxy.
 
 ```yaml
 # Replace with the private key for your service account
