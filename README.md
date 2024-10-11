@@ -2,13 +2,17 @@
 
 # authzjwtbearerinjector
 
-A GRPC-based ExtAuthz service for Envoy Proxy that implements the jwt-bearer flow, injecting authentication credentials to backend services.
+A GRPC-based [ExtAuthz](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter) service for [Envoy Proxy](https://www.envoyproxy.io/) that implements the [jwt-bearer flow](https://datatracker.ietf.org/doc/html/rfc7523), injecting authentication credentials to backend services.
 
 ## Overview
 
 The purpose of this service is to request JWT tokens to send to backend services through the use of an Envoy Proxy ExtAuthz service. It specifically implements the JWT-bearer flow with a private key used to sign a JWT token, which is then used in an OAuth 2.0 JWT-bearer flow to request a new token from the server. This new token is injected as the Authorization Bearer token in requests to the backend service.
 
 This service is implemented in Go and is intended to run as a sidecar to the Envoy Proxy. It is configured to listen on a specific port for requests from the Envoy Proxy and then make requests to the OAuth 2.0 server to get the JWT token to inject into the request to the backend service.
+
+## Usage
+
+The latest `authzjwtbearerinjector` Docker image is available for deployment from GitHub Packages at [ghcr.io/unitvectory-labs/authzjwtbearerinjector](https://github.com/UnitVectorY-Labs/authzjwtbearerinjector/pkgs/container/authzjwtbearerinjector). This service is designed to run as a sidecar to Envoy Proxy. You can deploy this container alongside Envoy and configure Envoy to point to the `authzjwtbearerinjector` using the ExtAuthz filter, as described in the configuration section. The primary use case is to manage authentication with an RSA private key by generating JWTs to securely communicate with other services.
 
 ## Configuration
 
