@@ -14,6 +14,8 @@ This service is implemented in Go and is intended to run as a sidecar to the Env
 
 There are multiple ways to configure `authzjwtbearerinjector` using a YAML configuration file, environment variables, or Envoy Proxy route metadata.  If the same configuration parameter is provided multiple ways the following order of precedence is used: configuration file used first, environment variables overwrite configuration file, and route metadata overwrites everything else.
 
+The config YAML file by default is loaded in from `/app/config.yaml` in the Docker image and can be injected to that location.  The location of the config file can be overridden by setting an alternative path the the envirionment variable `CONFIG_FILE_PATH`.
+
 The following parameters must be configured with either the YAML configuration or environment variables and are mandatory for the service to start.
 
 | YAML Parameter         | Environment Variable    | Description                                                            |
@@ -141,6 +143,15 @@ Additional or alternate parameters can be used such as `urn:ietf:params:oauth:cl
 Tokens requested by the service are cached for their entire lifetime. However, a soft expiration mechanism refreshes the token before it fully expires, defaulting to 50% of its lifespan. This default behavior can be customized using the YAML configuration `soft_token_lifetime` or the environment variable `SOFT_TOKEN_LIFETIME`. The value is optional and must be a decimal between 0 and 1, representing the percentage of the token's validity period. For example a default token lifetime of 1 hour with a soft token lifetime of 0.5 would refresh the token every 30 minutes assuming a request was made. Tokens are not proactively refreshed.
 
 Tokens are cached based on the combination of input parameters provided to the service via Envoy Proxy route metadata, ensuring the correct JWT is returned. If a token has passed its soft expiration period, it will be refreshed on the next request. If the refresh fails and the token is still valid, the previously cached token will be returned.
+
+## Optional Configuration
+
+The following is a summary of the optional configurations that can be set.
+
+| YAML Parameter         | Environment Variable    | Description                                                            |
+|------------------------|-------------------------|------------------------------------------------------------------------|
+| `soft_token_lifetime`  | `SOFT_TOKEN_LIFETIME`   | The percentage of the token's validity period before it is refreshed.  |
+| N/A                    | `CONFIG_FILE_PATH`      | The path to the configuration file.                                    |
 
 ## Envoy Proxy Configuration
 
