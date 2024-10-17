@@ -3,9 +3,14 @@ module authzjwtbearerinjector
 go 1.23.2
 
 require (
-	github.com/envoyproxy/go-control-plane v0.13.0
+	github.com/envoyproxy/go-control-plane v0.13.1
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240930140551-af27646dc61f
 	google.golang.org/grpc v1.67.1
+)
+
+require (
+	github.com/kr/text v0.2.0 // indirect
+	github.com/rogpeppe/go-internal v1.13.1 // indirect
 )
 
 require (
