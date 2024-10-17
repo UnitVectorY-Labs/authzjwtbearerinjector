@@ -1,4 +1,4 @@
-package internal
+package config
 
 import (
 	"log"
@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	logger "authzjwtbearerinjector/internal/logger"
 )
 
 const (
@@ -110,22 +112,22 @@ func NewConfig() *Config {
 	}
 
 	// Log the configuration if debug logging is enabled
-	if debugLogEnabled {
+	if logger.IsDebugLogEnabled() {
 
 		for k, v := range config.TokenHeader {
-			DebugLog("Config - Token Header: %s = %s", k, v)
+			logger.DebugLog("Config - Token Header: %s = %s", k, v)
 		}
 
 		for k, v := range config.TokenPayload {
-			DebugLog("Config - Token Payload: %s = %s", k, v)
+			logger.DebugLog("Config - Token Payload: %s = %s", k, v)
 		}
 
 		for k, v := range config.OauthRequest {
-			DebugLog("Config - OAuth2 Request: %s = %s", k, v)
+			logger.DebugLog("Config - OAuth2 Request: %s = %s", k, v)
 		}
 
-		DebugLog("Config - OAuth2 Token URL: %s", config.OauthTokenUrl)
-		DebugLog("Config - Soft Token Lifetime: %f", config.SoftTokenLifetime)
+		logger.DebugLog("Config - OAuth2 Token URL: %s", config.OauthTokenUrl)
+		logger.DebugLog("Config - Soft Token Lifetime: %f", config.SoftTokenLifetime)
 	}
 
 	// Make sure the required components are set otherwise panic

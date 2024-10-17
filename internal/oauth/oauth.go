@@ -1,4 +1,4 @@
-package internal
+package oauth
 
 import (
 	"encoding/base64"
@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	config "authzjwtbearerinjector/internal/config"
+	logger "authzjwtbearerinjector/internal/logger"
 )
 
 var (
@@ -41,23 +44,23 @@ func init() {
 	}
 }
 
-func ExchangeJWTBearerForToken(config Config, jwt string, metadataOauthRequest map[string]string) (string, time.Time, time.Time, error) {
+func ExchangeJWTBearerForToken(config config.Config, jwt string, metadataOauthRequest map[string]string) (string, time.Time, time.Time, error) {
 
 	now := time.Now()
 
-	DebugLog("Exchanging JWT for token")
+	logger.DebugLog("Exchanging JWT for token")
 
 	// Build the jwt-bearer token request
 	data := url.Values{}
 
 	for k, v := range config.OauthRequest {
 		data.Set(k, replaceJwtVariables(v, jwt))
-		DebugLog("Request Attribute: %s = %s", k, v)
+		logger.DebugLog("Request Attribute: %s = %s", k, v)
 	}
 
 	for k, v := range metadataOauthRequest {
 		data.Set(k, replaceJwtVariables(v, jwt))
-		DebugLog("Request Attribute (Metadata): %s = %s", k, v)
+		logger.DebugLog("Request Attribute (Metadata): %s = %s", k, v)
 	}
 
 	req, err := http.NewRequest(post, config.OauthTokenUrl, strings.NewReader(data.Encode()))
