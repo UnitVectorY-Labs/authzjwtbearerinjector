@@ -1,4 +1,4 @@
-package internal
+package jwt
 
 import (
 	"crypto"
@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	config "authzjwtbearerinjector/internal/config"
+	logger "authzjwtbearerinjector/internal/logger"
 )
 
 const (
@@ -18,19 +21,19 @@ const (
 	jwt   = "JWT"
 )
 
-func SignLocalJWT(config Config, privateKey *rsa.PrivateKey, metadataTokenHeader map[string]string, metadataTokenPayload map[string]string) (string, error) {
+func SignLocalJWT(config config.Config, privateKey *rsa.PrivateKey, metadataTokenHeader map[string]string, metadataTokenPayload map[string]string) (string, error) {
 
 	// Build the Header
 	header := map[string]string{}
 
 	for k, v := range config.TokenHeader {
 		header[k] = replaceDynamicVariables(v)
-		DebugLog("Added Header: %s = %s", k, v)
+		logger.DebugLog("Added Header: %s = %s", k, v)
 	}
 
 	for k, v := range metadataTokenHeader {
 		header[k] = replaceDynamicVariables(v)
-		DebugLog("Added Header (Metadata): %s = %s", k, v)
+		logger.DebugLog("Added Header (Metadata): %s = %s", k, v)
 	}
 
 	header["alg"] = rs256
@@ -44,12 +47,12 @@ func SignLocalJWT(config Config, privateKey *rsa.PrivateKey, metadataTokenHeader
 
 	for k, v := range config.TokenPayload {
 		payload[k] = replaceDynamicVariables(v)
-		DebugLog("Added Payload Claim: %s = %s", k, v)
+		logger.DebugLog("Added Payload Claim: %s = %s", k, v)
 	}
 
 	for k, v := range metadataTokenPayload {
 		payload[k] = replaceDynamicVariables(v)
-		DebugLog("Added Payload Claim (Metadata): %s = %s", k, v)
+		logger.DebugLog("Added Payload Claim (Metadata): %s = %s", k, v)
 	}
 
 	payload["iat"] = time.Now().Unix()
@@ -66,7 +69,7 @@ func SignLocalJWT(config Config, privateKey *rsa.PrivateKey, metadataTokenHeader
 
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hashed)
 	if err != nil {
-		DebugLog("Error signing JWT: %v", err)
+		logger.DebugLog("Error signing JWT: %v", err)
 		return "", err
 	}
 

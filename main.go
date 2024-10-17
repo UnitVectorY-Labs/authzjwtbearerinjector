@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	authz "authzjwtbearerinjector/internal"
-
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -18,10 +16,15 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+
+	authz_cache "authzjwtbearerinjector/internal/cache"
+	authz_config "authzjwtbearerinjector/internal/config"
+	authz_logger "authzjwtbearerinjector/internal/logger"
+	authz_rsa "authzjwtbearerinjector/internal/rsa"
 )
 
 var (
-	config     authz.Config
+	config     authz_config.Config
 	privateKey *rsa.PrivateKey
 )
 
@@ -38,10 +41,10 @@ type authServer struct {
 func main() {
 
 	// Load in the config
-	config = *authz.NewConfig()
+	config = *authz_config.NewConfig()
 
 	// Parse the private key
-	parsedPrivateKey, err := authz.ParsePrivateKey(config.PrivateKey)
+	parsedPrivateKey, err := authz_rsa.ParsePrivateKey(config.PrivateKey)
 	if err != nil {
 		log.Fatalf("failed to parse private key: %v", err)
 	}
@@ -85,9 +88,9 @@ func (a *authServer) Check(ctx context.Context, req *pb.CheckRequest) (*pb.Check
 
 	// Get the cached token
 	start := time.Now()
-	jwtToken, err := authz.GetCachedToken(config, privateKey, metadataTokenHeader, metadataTokenPayload, metadataOauthRequest)
+	jwtToken, err := authz_cache.GetCachedToken(config, privateKey, metadataTokenHeader, metadataTokenPayload, metadataOauthRequest)
 	elapsed := time.Since(start)
-	authz.DebugLog("getCachedToken took %s", elapsed)
+	authz_logger.DebugLog("getCachedToken took %s", elapsed)
 
 	if err != nil {
 		log.Printf("Error getting cached token: %v", err)
@@ -144,7 +147,7 @@ func extractMetadataClaims(req *pb.CheckRequest, namespace string) map[string]st
 			}
 		}
 	} else {
-		authz.DebugLog("%s not found in filter metadata", namespace)
+		authz_logger.DebugLog("%s not found in filter metadata", namespace)
 	}
 
 	return claims

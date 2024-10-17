@@ -1,4 +1,4 @@
-package internal
+package rsa
 
 import (
 	"crypto/rsa"

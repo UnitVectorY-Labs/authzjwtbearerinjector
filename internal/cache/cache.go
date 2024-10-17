@@ -1,4 +1,4 @@
-package internal
+package cache
 
 import (
 	"crypto/rsa"
@@ -8,6 +8,11 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	config "authzjwtbearerinjector/internal/config"
+	jwt "authzjwtbearerinjector/internal/jwt"
+	logger "authzjwtbearerinjector/internal/logger"
+	oauth "authzjwtbearerinjector/internal/oauth"
 )
 
 var (
@@ -27,11 +32,11 @@ type CachedTokenValue struct {
 	Issued     time.Time
 }
 
-func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataTokenHeader map[string]string, metadataTokenPayload map[string]string, metadataOauthRequest map[string]string) (string, error) {
+func GetCachedToken(config config.Config, privateKey *rsa.PrivateKey, metadataTokenHeader map[string]string, metadataTokenPayload map[string]string, metadataOauthRequest map[string]string) (string, error) {
 	// Step 1: Hash the metadata Claims to create a unique cache key
 	cacheKey := hashClaims(metadataTokenHeader, metadataTokenPayload, metadataOauthRequest)
 
-	DebugLog("getCachedToken: %s", cacheKey)
+	logger.DebugLog("getCachedToken: %s", cacheKey)
 
 	// Step 2: Try to load the cached token entry
 	cachedEntry, exists := tokenCache.Load(cacheKey)
@@ -54,7 +59,7 @@ func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataTokenHead
 			tokenCache.Store(cacheKey, newCachedToken)
 			cachedToken = newCachedToken
 
-			DebugLog("Cache miss with token for: %s", cacheKey)
+			logger.DebugLog("Cache miss with token for: %s", cacheKey)
 		}
 	}
 
@@ -62,55 +67,55 @@ func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataTokenHead
 		// Step 5: Type assert the cached entry as *CachedToken
 		cachedToken = cachedEntry.(*CachedToken)
 
-		if IsDebugLogEnabled() {
+		if logger.IsDebugLogEnabled() {
 			// Token found, log how long until the token expires
 			timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
-			DebugLog("Token found in cache, expires in: %s", timeTillExpiry)
+			logger.DebugLog("Token found in cache, expires in: %s", timeTillExpiry)
 			// And the soft expiration time
 			timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
-			DebugLog("Token found in cache, soft expires in: %s", timeTillSoftExpiry)
+			logger.DebugLog("Token found in cache, soft expires in: %s", timeTillSoftExpiry)
 		}
 
 		// Step 6: Check if the token is still within soft expiry
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			DebugLog("Returning cached token for: %s", cacheKey)
+			logger.DebugLog("Returning cached token for: %s", cacheKey)
 			return cachedToken.TokenValue.Token, nil
 		}
 	}
 
-	DebugLog("Waiting for lock on: %s", cacheKey)
+	logger.DebugLog("Waiting for lock on: %s", cacheKey)
 
 	// Step 7: Lock the token generation if it hasn't been done yet
 	cachedToken.Mutex.Lock()
 	defer cachedToken.Mutex.Unlock()
 
-	DebugLog("Lock acquired on: %s", cacheKey)
+	logger.DebugLog("Lock acquired on: %s", cacheKey)
 
 	// Step 8: After locking, check again if the token is still valid
 	if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-		DebugLog("Returning cached generated after getting lock token for: %s", cacheKey)
+		logger.DebugLog("Returning cached generated after getting lock token for: %s", cacheKey)
 		return cachedToken.TokenValue.Token, nil
 	}
 
 	// Step 9: Generate a new JWT
-	localJWT, err := SignLocalJWT(config, privateKey, metadataTokenHeader, metadataTokenPayload)
+	localJWT, err := jwt.SignLocalJWT(config, privateKey, metadataTokenHeader, metadataTokenPayload)
 	if err != nil {
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			DebugLog("Soft expired token generation failed, using existing token: %s. Error: %v", cacheKey, err)
+			logger.DebugLog("Soft expired token generation failed, using existing token: %s. Error: %v", cacheKey, err)
 			return cachedToken.TokenValue.Token, nil
 		}
-		DebugLog("Failed to generate new token: %s. Error: %v", cacheKey, err)
+		logger.DebugLog("Failed to generate new token: %s. Error: %v", cacheKey, err)
 		return "", fmt.Errorf("failed to generate new token: %w", err)
 	}
 
 	// Step 10: Exchange the local JWT for an actual token
-	token, expiry, issuedAt, err := ExchangeJWTBearerForToken(config, localJWT, metadataOauthRequest)
+	token, expiry, issuedAt, err := oauth.ExchangeJWTBearerForToken(config, localJWT, metadataOauthRequest)
 	if err != nil {
 		if time.Now().Before(cachedToken.TokenValue.SoftExpiry) {
-			DebugLog("Soft expired token exchange failed, using existing token: %s. Error: %v", cacheKey, err)
+			logger.DebugLog("Soft expired token exchange failed, using existing token: %s. Error: %v", cacheKey, err)
 			return cachedToken.TokenValue.Token, nil
 		}
-		DebugLog("Failed to exchange token: %s. Error: %v", cacheKey, err)
+		logger.DebugLog("Failed to exchange token: %s. Error: %v", cacheKey, err)
 		return "", fmt.Errorf("failed to exchange token: %w", err)
 	}
 
@@ -128,15 +133,15 @@ func GetCachedToken(config Config, privateKey *rsa.PrivateKey, metadataTokenHead
 
 	cachedToken.TokenValue = newCachedTokenValue
 
-	if IsDebugLogEnabled() {
+	if logger.IsDebugLogEnabled() {
 		// Log how long until the token expires
 		timeTillExpiry := cachedToken.TokenValue.Expiry.Sub(time.Now())
-		DebugLog("New token generated, expires in: %s", timeTillExpiry)
+		logger.DebugLog("New token generated, expires in: %s", timeTillExpiry)
 		// And the soft expiration time
 		timeTillSoftExpiry := cachedToken.TokenValue.SoftExpiry.Sub(time.Now())
-		DebugLog("New token generated, soft expires in: %s", timeTillSoftExpiry)
+		logger.DebugLog("New token generated, soft expires in: %s", timeTillSoftExpiry)
 
-		DebugLog("New token request successful: %s", cacheKey)
+		logger.DebugLog("New token request successful: %s", cacheKey)
 	}
 
 	return token, nil
