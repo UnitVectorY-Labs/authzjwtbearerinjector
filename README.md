@@ -2,7 +2,7 @@
 
 # authzjwtbearerinjector
 
-A GRPC-based [ExtAuthz](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter) service for [Envoy Proxy](https://www.envoyproxy.io/) that implements the [jwt-bearer flow](https://datatracker.ietf.org/doc/html/rfc7523), injecting authentication credentials to backend services.
+A gRPC-based [ExtAuthz](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter) service for [Envoy Proxy](https://www.envoyproxy.io/) that implements the [jwt-bearer flow](https://datatracker.ietf.org/doc/html/rfc7523), injecting authentication credentials to backend services.
 
 ## Overview
 
