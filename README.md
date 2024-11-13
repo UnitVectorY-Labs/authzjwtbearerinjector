@@ -8,7 +8,7 @@ A gRPC-based [ExtAuthz](https://www.envoyproxy.io/docs/envoy/latest/configuratio
 
 The purpose of this service is to request JWT tokens to send to backend services through the use of an Envoy Proxy ExtAuthz service. It specifically implements the JWT-bearer flow with a private key used to sign a JWT token, which is then used in an OAuth 2.0 JWT-bearer flow to request a new token from the server. This new token is injected as the Authorization Bearer token in requests to the backend service.
 
-This service is implemented in Go and is intended to run as a sidecar to the Envoy Proxy. It is configured to listen on a specific port for requests from the Envoy Proxy and then make requests to the OAuth 2.0 server to get the JWT token to inject into the request to the backend service.
+This service is implemented in Go and is intended to run as a sidecar to the Envoy Proxy. It is configured to listen on a specific port, 50051 by default, for gRPC requests from the Envoy Proxy and then make requests to the OAuth 2.0 server to get the JWT token to inject into the request to the backend service.
 
 ## Usage
 
