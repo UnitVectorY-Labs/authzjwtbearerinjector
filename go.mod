@@ -1,6 +1,6 @@
 module authzjwtbearerinjector
 
-go 1.23
+go 1.23.4
 
 require (
 	github.com/envoyproxy/go-control-plane v0.13.1
