@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 
-	config "authzjwtbearerinjector/internal/config"
-	logger "authzjwtbearerinjector/internal/logger"
+	config "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/config"
+	logger "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/logger"
 )
 
 const (

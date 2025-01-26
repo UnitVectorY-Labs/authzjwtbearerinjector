@@ -1,4 +1,4 @@
-module authzjwtbearerinjector
+module github.com/UnitVectorY-Labs/authzjwtbearerinjector
 
 go 1.23.5
 

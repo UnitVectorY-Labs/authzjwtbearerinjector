@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	config "authzjwtbearerinjector/internal/config"
-	jwt "authzjwtbearerinjector/internal/jwt"
-	logger "authzjwtbearerinjector/internal/logger"
-	oauth "authzjwtbearerinjector/internal/oauth"
+	config "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/config"
+	jwt "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/jwt"
+	logger "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/logger"
+	oauth "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/oauth"
 )
 
 var (

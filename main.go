@@ -17,10 +17,10 @@ import (
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 
-	authz_cache "authzjwtbearerinjector/internal/cache"
-	authz_config "authzjwtbearerinjector/internal/config"
-	authz_logger "authzjwtbearerinjector/internal/logger"
-	authz_rsa "authzjwtbearerinjector/internal/rsa"
+	authz_cache "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/cache"
+	authz_config "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/config"
+	authz_logger "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/logger"
+	authz_rsa "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/rsa"
 )
 
 var (

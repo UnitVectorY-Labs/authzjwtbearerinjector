@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	logger "authzjwtbearerinjector/internal/logger"
+	logger "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/logger"
 )
 
 const (
