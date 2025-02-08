@@ -1,6 +1,6 @@
 module github.com/UnitVectorY-Labs/authzjwtbearerinjector
 
-go 1.23.5
+go 1.23.6
 
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4
