@@ -106,7 +106,7 @@ func NewConfig() *Config {
 		config.SoftTokenLifetime = tokenSoftLifetimeParsed
 	}
 
-	// Enforce that SoftTokenLifetime is beteen 0 and 1
+	// Enforce that SoftTokenLifetime is between 0 and 1
 	if config.SoftTokenLifetime < 0 || config.SoftTokenLifetime > 1 {
 		config.SoftTokenLifetime = 0.5
 	}
