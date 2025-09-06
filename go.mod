@@ -1,6 +1,6 @@
 module github.com/UnitVectorY-Labs/authzjwtbearerinjector
 
-go 1.25.0 // GOVERSION
+go 1.25.1 // GOVERSION
 
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4
