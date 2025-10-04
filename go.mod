@@ -3,7 +3,7 @@ module github.com/UnitVectorY-Labs/authzjwtbearerinjector
 go 1.25.1 // GOVERSION
 
 require (
-	github.com/envoyproxy/go-control-plane/envoy v1.32.4
+	github.com/envoyproxy/go-control-plane/envoy v1.35.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250707201910-8d1bb00bc6a7
 	google.golang.org/grpc v1.75.1
 )
