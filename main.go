@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -23,6 +24,9 @@ import (
 	authz_rsa "github.com/UnitVectorY-Labs/authzjwtbearerinjector/internal/rsa"
 )
 
+// Version is the application version, injected at build time via ldflags
+var Version = "dev"
+
 var (
 	config     authz_config.Config
 	privateKey *rsa.PrivateKey
@@ -39,6 +43,16 @@ type authServer struct {
 }
 
 func main() {
+	// Set the build version from the build info if not set by the build system
+	if Version == "dev" || Version == "" {
+		if bi, ok := debug.ReadBuildInfo(); ok {
+			if bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+				Version = bi.Main.Version
+			}
+		}
+	}
+
+	log.Printf("Starting authzjwtbearerinjector version %s", Version)
 
 	// Load in the config
 	config = *authz_config.NewConfig()

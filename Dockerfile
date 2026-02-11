@@ -4,6 +4,9 @@ FROM golang:1.25.7 AS builder
 # Set the working directory inside the container
 WORKDIR /app
 
+# Build argument for version injection
+ARG VERSION=dev
+
 # Copy the Go modules manifest and download dependencies
 COPY go.mod go.sum ./
 RUN go mod download
@@ -14,8 +17,8 @@ COPY . .
 # Ensures a statically linked binary
 ENV CGO_ENABLED=0
 
-# Build the Go gRPC server
-RUN go build -mod=readonly -o server .
+# Build the Go server with version injection
+RUN go build -mod=readonly -o server -ldflags "-X 'main.Version=${VERSION}'" .
 
 # Use a minimal base image for running the compiled binary
 FROM gcr.io/distroless/base-debian13
@@ -26,5 +29,8 @@ COPY --from=builder /app/server /server
 # Expose the port that the gRPC server will listen on
 EXPOSE 50051
 
-# Run the gRPC server binary
+# Run as non-root user
+USER 65532:65532
+
+# Run the server binary
 CMD ["/server"]
