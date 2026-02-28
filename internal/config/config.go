@@ -99,11 +99,12 @@ func NewConfig() *Config {
 	envValSoftTokenLifetime := os.Getenv(envSoftTokenLifetime)
 	if envValSoftTokenLifetime != "" {
 
-		tokenSoftLifetimeParsed, err := strconv.ParseFloat(envValSoftTokenLifetime, 32)
+		tokenSoftLifetimeParsed, err := strconv.ParseFloat(envValSoftTokenLifetime, 64)
 		if err != nil {
 			log.Printf("failed to parse SOFT_TOKEN_LIFETIME: %v", err)
+		} else {
+			config.SoftTokenLifetime = tokenSoftLifetimeParsed
 		}
-		config.SoftTokenLifetime = tokenSoftLifetimeParsed
 	}
 
 	// Enforce that SoftTokenLifetime is between 0 and 1
