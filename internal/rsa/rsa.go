@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"log"
 	"strings"
 )
@@ -44,7 +45,7 @@ func ParsePrivateKey(privateKeyString string) (*rsa.PrivateKey, error) {
 	privateKey, ok := parsedKey.(*rsa.PrivateKey)
 	if !ok {
 		log.Println("not an RSA private key")
-		return nil, err
+		return nil, errors.New("not an RSA private key")
 	}
 
 	log.Println("Successfully parsed the RSA private key")
