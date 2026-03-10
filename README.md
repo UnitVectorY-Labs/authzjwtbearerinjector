@@ -41,7 +41,7 @@ The JWT Header by default will include the following claims which cannot be chan
 
 Additional claims can be added to the header using one of the following methods.
 
-The YAML configuration file will inject all attributes under the `token_header` attribute as an array.  The environment variables are set with the prefix of `TOKEN_HEADER_` followed by the claim name that is case sensitive.  For metadata the namespace used is `com.unitvectory.authzjwtbearerinjector.tokenheader` with the claims as values.
+The YAML configuration file will inject all attributes under the `token_header` attribute as a map.  The environment variables are set with the prefix of `TOKEN_HEADER_` followed by the claim name that is case sensitive.  For metadata the namespace used is `com.unitvectory.authzjwtbearerinjector.tokenheader` with the claims as values.
 
 The field that is most likely mandatory is setting the kid for the private key.  The example for this using each of the options are shown as follows for the Key ID of `0000000000000000000000000000000000000000`.
 
@@ -78,7 +78,7 @@ The JWT Payload by default will include the following claims which cannot be cha
 }
 ```
 
-The YAML configuration file will inject all attributes under the `token_payload` attribute as an array.  The environment variables are set with the prefix of `TOKEN_PAYLOAD_` followed by the claim name that is case sensitive.  For metadata the namespace used is `com.unitvectory.authzjwtbearerinjector.tokenpayload` with the claims as values.
+The YAML configuration file will inject all attributes under the `token_payload` attribute as a map.  The environment variables are set with the prefix of `TOKEN_PAYLOAD_` followed by the claim name that is case sensitive.  For metadata the namespace used is `com.unitvectory.authzjwtbearerinjector.tokenpayload` with the claims as values.
 
 These are set the same way as the header claims.  The payload attributes `iss`, `sub`, and `aud` are most likely required by an implementation but any arbitrary claim can be included.  A special string can be set as the value of `${{UUID}}` which will be replaced with a randomly generated UUID.  This is useful for claims such as `jti`.
 
@@ -156,6 +156,8 @@ The following is a summary of the optional configurations that can be set.
 |------------------------|-------------------------|------------------------------------------------------------------------|
 | `soft_token_lifetime`  | `SOFT_TOKEN_LIFETIME`   | The percentage of the token's validity period before it is refreshed.  |
 | N/A                    | `CONFIG_FILE_PATH`      | The path to the configuration file.                                    |
+| N/A                    | `PORT`                  | The port the gRPC server listens on (default: `50051`).                |
+| N/A                    | `DEBUG`                 | Enable debug logging when set to `true`.                               |
 
 ## Envoy Proxy Configuration
 
