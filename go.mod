@@ -5,7 +5,7 @@ go 1.26 // GOVERSION
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217
-	google.golang.org/grpc v1.79.2
+	google.golang.org/grpc v1.79.3
 )
 
 require (
