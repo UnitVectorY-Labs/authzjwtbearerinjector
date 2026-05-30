@@ -171,7 +171,7 @@ func hashClaims(metadataTokenHeader map[string]string, metadataTokenPayload map[
 
 	// Write the sorted key-value pairs to the hash
 	for _, k := range keys {
-		h.Write([]byte(fmt.Sprintf("%s:%v", k, combinedClaims[k])))
+		h.Write(fmt.Appendf(nil, "%s:%v", k, combinedClaims[k]))
 	}
 
 	// Return the final hash as a hexadecimal string

@@ -43,7 +43,7 @@ func SignLocalJWT(config config.Config, privateKey *rsa.PrivateKey, metadataToke
 	encodedHeader := base64.RawURLEncoding.EncodeToString(headerBytes)
 
 	// Build the Payload
-	payload := map[string]interface{}{}
+	payload := map[string]any{}
 
 	for k, v := range config.TokenPayload {
 		payload[k] = replaceDynamicVariables(v)
