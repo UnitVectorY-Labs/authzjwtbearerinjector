@@ -83,12 +83,12 @@ func NewConfig() *Config {
 		key := pair[0]
 		value := pair[1]
 
-		if strings.HasPrefix(key, envTokenHeaderPrefix) {
-			config.TokenHeader[strings.TrimPrefix(key, envTokenHeaderPrefix)] = value
-		} else if strings.HasPrefix(key, envTokenPayloadPrefix) {
-			config.TokenPayload[strings.TrimPrefix(key, envTokenPayloadPrefix)] = value
-		} else if strings.HasPrefix(key, envOauthRequestPrefix) {
-			config.OauthRequest[strings.TrimPrefix(key, envOauthRequestPrefix)] = value
+		if after, ok := strings.CutPrefix(key, envTokenHeaderPrefix); ok {
+			config.TokenHeader[after] = value
+		} else if after, ok := strings.CutPrefix(key, envTokenPayloadPrefix); ok {
+			config.TokenPayload[after] = value
+		} else if after, ok := strings.CutPrefix(key, envOauthRequestPrefix); ok {
+			config.OauthRequest[after] = value
 		}
 	}
 

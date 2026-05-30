@@ -81,7 +81,7 @@ func ExchangeJWTBearerForToken(config config.Config, jwt string, metadataOauthRe
 		return "", now, now, errors.New("OAuth2 token endpoint returned status " + resp.Status + ": " + string(bodyBytes))
 	}
 
-	var respData map[string]interface{}
+	var respData map[string]any
 	decoder := json.NewDecoder(resp.Body)
 	err = decoder.Decode(&respData)
 	if err != nil {
@@ -120,7 +120,7 @@ func extractExpirationClaims(token string) (time.Time, time.Time) {
 	}
 
 	// Parse the payload into a map
-	var claims map[string]interface{}
+	var claims map[string]any
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		// If parsing the payload fails, return default values
 		return defaultExp, defaultIat
