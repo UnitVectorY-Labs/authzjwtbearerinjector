@@ -1,0 +1,18 @@
+name: "authzjwtbearerinjector"
+default_branch: "main"
+config:
+  description: "A gRPC-based [ExtAuthz](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter) service for [Envoy Proxy](https://www.envoyproxy.io/) that implements the [jwt-bearer flow](https://datatracker.ietf.org/doc/html/rfc7523), injecting authentication credentials to backend services."
+  license: "MIT"
+  language: "go"
+  release: "docker-go"
+  release_github: true
+  status: "active"
+  justfile: false
+  codecov:
+    enabled: true
+  docs:
+    enabled: false
+  docker_port: 50051
+  clip4llm:
+    exclude:
+      - "test.sh"

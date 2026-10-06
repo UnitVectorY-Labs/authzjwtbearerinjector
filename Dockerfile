@@ -26,7 +26,7 @@ FROM gcr.io/distroless/base-debian13
 # Copy the built server binary into the runtime container
 COPY --from=builder /app/server /server
 
-# Expose the port that the gRPC server will listen on
+# Expose the port that the server will listen on
 EXPOSE 50051
 
 # Run as non-root user
