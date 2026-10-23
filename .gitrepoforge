@@ -16,3 +16,4 @@ config:
   clip4llm:
     exclude:
       - "test.sh"
+  osv: sarif
