@@ -6,7 +6,8 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
+	"fmt"
 	"strings"
 	"time"
 
@@ -39,7 +40,10 @@ func SignLocalJWT(config config.Config, privateKey *rsa.PrivateKey, metadataToke
 	header["alg"] = rs256
 	header["typ"] = jwt
 
-	headerBytes, _ := json.Marshal(header)
+	headerBytes, err := json.Marshal(header)
+	if err != nil {
+		return "", fmt.Errorf("marshal JWT header: %w", err)
+	}
 	encodedHeader := base64.RawURLEncoding.EncodeToString(headerBytes)
 
 	// Build the Payload
@@ -58,7 +62,10 @@ func SignLocalJWT(config config.Config, privateKey *rsa.PrivateKey, metadataToke
 	payload["iat"] = time.Now().Unix()
 	payload["exp"] = time.Now().Add(time.Hour).Unix() // Defaulting to industry standard of 1 hour
 
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal JWT payload: %w", err)
+	}
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
 
 	// Create the signature
