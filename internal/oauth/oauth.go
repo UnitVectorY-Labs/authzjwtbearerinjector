@@ -2,7 +2,7 @@ package oauth
 
 import (
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net"
@@ -82,8 +82,7 @@ func ExchangeJWTBearerForToken(config config.Config, jwt string, metadataOauthRe
 	}
 
 	var respData map[string]any
-	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&respData)
+	err = json.UnmarshalRead(resp.Body, &respData)
 	if err != nil {
 		return "", now, now, err
 	}
