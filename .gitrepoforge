@@ -8,8 +8,6 @@ config:
   release_github: true
   status: "active"
   justfile: false
-  codecov:
-    enabled: true
   docs:
     enabled: false
   docker_port: 50051
